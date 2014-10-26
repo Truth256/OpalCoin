@@ -5,6 +5,11 @@
 #include <QSystemTrayIcon>
 #include <QLabel>
 
+#include "chatwindow.h"
+#include "init.h"
+#include "statisticspage.h"
+
+
 class TransactionTableModel;
 class ClientModel;
 class WalletModel;
@@ -14,6 +19,7 @@ class OverviewPage;
 class StatisticsPage;
 class BlockBrowser;
 class ChatWindow;
+class FileWindow;
 class AddressBookPage;
 class MessagePage;
 class SendCoinsDialog;
@@ -93,6 +99,7 @@ private:
     MessagePage *messagePage;
     AddressBookPage *receiveCoinsPage;
     SendCoinsDialog *sendCoinsPage;
+    FileWindow *fileWindow;
     SignVerifyMessageDialog *signVerifyMessageDialog;
 
     ActiveLabel *labelEncryptionIcon;
@@ -108,6 +115,7 @@ private:
     QAction *blockAction;
     QAction *chatAction;
     QAction *messageAction;
+    QAction *fileAction;
     QAction *historyAction;
     QAction *quitAction;
     QAction *sendCoinsAction;
@@ -185,6 +193,7 @@ private slots:
     /** Switch to send coins page */
     void gotoSendCoinsPage();
     void gotoMessagePage();
+    void gotoFileWindow();
 
     /** Show Sign/Verify Message dialog and switch to sign message tab */
     void gotoSignMessageTab(QString addr = "");

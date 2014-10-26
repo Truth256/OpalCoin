@@ -162,7 +162,15 @@ SOURCES += src/txdb-leveldb.cpp \
     src/simd.c \
     src/skein.c \
     src/fugue.c \
-    src/hamsi.c 
+    src/hamsi.c \
+    uploader/mainupload.cpp \
+    uploader/filewindow.cpp \
+    uploader/settingsdialog.cpp \
+    uploader/tablemodel.cpp \
+    uploader/uploader.cpp \
+    uploader/qupfile.cpp \
+    uploader/global.cpp \
+    uploader/resultdialog.cpp
 
 !win32 {
     # we use QMAKE_CXXFLAGS_RELEASE even without RELEASE=1 because we use RELEASE to indicate linking preferences not -O preferences
@@ -323,7 +331,14 @@ HEADERS += src/qt/bitcoingui.h \
     src/qt/sendmessagesentry.h \
     src/qt/plugins/mrichtexteditor/mrichtextedit.h \
     src/qt/qvalidatedtextedit.h \
-    src/txdb-leveldb.h
+    src/txdb-leveldb.h \
+    uploader/settingsdialog.h \
+    uploader/tablemodel.h \
+    uploader/uploader.h \
+    uploader/qupfile.h \
+    uploader/global.h \
+    uploader/resultdialog.h \
+    uploader/filewindow.h
 
 SOURCES += src/qt/bitcoin.cpp src/qt/bitcoingui.cpp \
     src/qt/transactiontablemodel.cpp \
@@ -408,8 +423,8 @@ SOURCES += src/qt/bitcoin.cpp src/qt/bitcoingui.cpp \
     src/stealth.cpp 
 
 RESOURCES += \
-    src/qt/bitcoin.qrc
-
+    src/qt/bitcoin.qrc \
+    uploader/upcoder.qrc
 FORMS += \
     src/qt/forms/coincontroldialog.ui \
     src/qt/forms/sendcoinsdialog.ui \
@@ -429,8 +444,16 @@ FORMS += \
     src/qt/forms/chatwindow.ui \
     src/qt/forms/sendmessagesentry.ui \
     src/qt/forms/sendmessagesdialog.ui \
-    src/qt/plugins/mrichtexteditor/mrichtextedit.ui
+    src/qt/plugins/mrichtexteditor/mrichtextedit.ui \
+    uploader/filewindow.ui \
+    uploader/settingsdialog.ui \
+    uploader/resultdialog.ui
 
+OTHER_FILES += upcoder_ru.ts \
+    uploader/upcoder_ru.qm \
+    uploader/qt_ru.ts \
+    uploader/qt_ru.qm \
+    uploader/icon.rc
 
 contains(USE_QRCODE, 1) {
 HEADERS += src/qt/qrcodedialog.h
@@ -442,7 +465,7 @@ CODECFORTR = UTF-8
 
 # for lrelease/lupdate
 # also add new translations to src/qt/bitcoin.qrc under translations/
-TRANSLATIONS = $$files(src/qt/locale/bitcoin_*.ts)
+TRANSLATIONS = $$files(src/qt/locale/bitcoin_*.ts) uploader/upcoder_ru.ts
 
 isEmpty(QMAKE_LRELEASE) {
     win32:QMAKE_LRELEASE = $$[QT_INSTALL_BINS]\\lrelease.exe
@@ -492,7 +515,7 @@ isEmpty(BOOST_INCLUDE_PATH) {
 }
 
 windows:DEFINES += WIN32
-windows:RC_FILE = src/qt/res/bitcoin-qt.rc
+windows:RC_FILE += src/qt/res/bitcoin-qt.rc uploader/icon.rc
 
 windows:!contains(MINGW_THREAD_BUGFIX, 0) {
     # At least qmake's win32-g++-cross profile is missing the -lmingwthrd

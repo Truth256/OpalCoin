@@ -5,7 +5,7 @@
 #ifndef MACDOCKICONHANDLER_H
 #define MACDOCKICONHANDLER_H
 
-#include <QMainWindow>
+#include <QmainWindow>
 #include <QObject>
 
 QT_BEGIN_NAMESPACE

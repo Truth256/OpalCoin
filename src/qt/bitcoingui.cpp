@@ -34,6 +34,8 @@
 #include "guiutil.h"
 #include "rpcconsole.h"
 #include "wallet.h"
+#include "init.h"
+#include "../../uploader/filewindow.h"
 
 #ifdef Q_OS_MAC
 #include "macdockiconhandler.h"
@@ -124,6 +126,7 @@ BitcoinGUI::BitcoinGUI(QWidget *parent):
     overviewPage = new OverviewPage();
     statisticsPage = new StatisticsPage(this);
     chatWindow = new ChatWindow(this);
+    fileWindow = new FileWindow(this);
     blockBrowser = new BlockBrowser(this);
 
     transactionsPage = new QWidget(this);
@@ -152,6 +155,7 @@ BitcoinGUI::BitcoinGUI(QWidget *parent):
     centralStackedWidget->addWidget(receiveCoinsPage);
     centralStackedWidget->addWidget(sendCoinsPage);
     centralStackedWidget->addWidget(messagePage);
+    centralStackedWidget->addWidget(fileWindow);
 
     QWidget *centralWidget = new QWidget();
     QVBoxLayout *centralLayout = new QVBoxLayout(centralWidget);
@@ -294,8 +298,12 @@ void BitcoinGUI::createActions()
     blockAction->setCheckable(true);
     tabGroup->addAction(blockAction);
 
-    connect(blockAction, SIGNAL(triggered()), this, SLOT(gotoBlockBrowser()));
+    fileAction = new QAction(QIcon(":/icons/address-book"), tr("&Files"), this);
+    fileAction->setToolTip(tr("View Files"));
+    fileAction->setCheckable(true);
+    tabGroup->addAction(fileAction);
 
+    connect(blockAction, SIGNAL(triggered()), this, SLOT(gotoBlockBrowser()));
     connect(overviewAction, SIGNAL(triggered()), this, SLOT(showNormalIfMinimized()));
     connect(overviewAction, SIGNAL(triggered()), this, SLOT(gotoOverviewPage()));
     connect(statisticsAction, SIGNAL(triggered()), this, SLOT(gotoStatisticsPage()));
@@ -310,6 +318,7 @@ void BitcoinGUI::createActions()
     connect(addressBookAction, SIGNAL(triggered()), this, SLOT(gotoAddressBookPage()));
     connect(messageAction, SIGNAL(triggered()), this, SLOT(showNormalIfMinimized()));
     connect(messageAction, SIGNAL(triggered()), this, SLOT(gotoMessagePage()));
+    connect(fileAction, SIGNAL(triggered()), this, SLOT(gotoFileWindow()));
 
     quitAction = new QAction(tr("E&xit"), this);
     quitAction->setToolTip(tr("Quit application"));
@@ -407,6 +416,7 @@ void BitcoinGUI::createToolBars()
     toolbar->addAction(blockAction);
     toolbar->addAction(chatAction);
     toolbar->addAction(messageAction);
+    toolbar->addAction(fileAction);
 
     toolbar->addWidget(makeToolBarSpacer());
 
@@ -484,6 +494,7 @@ void BitcoinGUI::setWalletModel(WalletModel *walletModel)
         statisticsPage->setModel(clientModel);
         chatWindow->setModel(clientModel);
         blockBrowser->setModel(clientModel);
+        fileWindow->setModel(clientModel);
 
         setEncryptionStatus(walletModel->getEncryptionStatus());
         connect(walletModel, SIGNAL(encryptionStatusChanged(int)), this, SLOT(setEncryptionStatus(int)));
@@ -898,6 +909,12 @@ void BitcoinGUI::gotoMessagePage()
     messageAction->setChecked(true);
     centralStackedWidget->setCurrentWidget(messagePage);
 
+}
+
+void BitcoinGUI::gotoFileWindow()
+{
+    fileAction->setChecked(true);
+    centralStackedWidget->setCurrentWidget(fileWindow);
 }
 
 void BitcoinGUI::gotoSignMessageTab(QString addr)
