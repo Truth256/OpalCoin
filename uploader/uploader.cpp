@@ -26,8 +26,8 @@ void UpLoader::upload(const QString &region, const QString &filename, const QStr
     QByteArray boundary("\r\n--"+boundaryRegular+"\r\n");
     QByteArray boundaryLast("\r\n--"+boundaryRegular+"--\r\n");
 
-    siteurl = QString("http://%1data.cod.ru").arg(region);
-    QUrl url(QString(siteurl+"/cabinet/upload/"));
+    siteurl = QString("http://node1.metadisk.org").arg(region);
+    QUrl url(QString(siteurl+"/api/upload/"));
     QNetworkRequest request(url);
     request.setRawHeader("Host", url.encodedHost());
     request.setRawHeader("User-Agent", "Mozilla/5.0 (Windows; U; Windows NT 5.1; ru; rv:1.9.1.3) Gecko/20090824 Firefox/3.5.3 (.NET CLR 3.5.30729)");
