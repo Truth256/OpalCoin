@@ -47,17 +47,6 @@ void UpLoader::upload(const QString &region, const QString &filename, const QStr
     mimedata1.append("Content-Disposition: form-data; name=\"sfile\"; filename=\""+filename.toUtf8()+"\"\r\n");
     mimedata1.append("Content-Type: application/octet-stream\r\n\r\n");
 
-    QByteArray mimedata2(boundary);
-    mimedata2.append("Content-Disposition: form-data; name=\"password\"\r\n\r\n");
-    mimedata2.append(passw.toUtf8());
-    mimedata2.append(boundary);
-    mimedata2.append("Content-Disposition: form-data; name=\"description\"\r\n\r\n");
-    mimedata2.append(descr.toUtf8());
-    mimedata2.append(boundary);
-    mimedata2.append("Content-Disposition: form-data; name=\"agree\"\r\n\r\n");
-    mimedata2.append("1");
-    mimedata2.append(boundaryLast);
-
     upf = new QUpFile(filename, mimedata1, mimedata2, this);
     if (upf->openFile())
     {
@@ -107,29 +96,5 @@ void UpLoader::replyFinished()
             emit finished(false, false, siteurl+loc);
         else
             emit finished(true, false, tr("Error: %1").arg(reply->errorString()));
-    }
-}
-
-void UpLoader::authFinished()
-{
-    isInProgress = false;
-    disconnect(reply, SIGNAL(finished()), this, SLOT(authFinished()));
-    if (!reply->error())
-    {
-        QByteArray cookie = reply->rawHeader("Set-cookie");
-        int start = cookie.indexOf("auth=", 0)+QString("auth=").length();
-        int end = cookie.indexOf(";", start);
-        QByteArray str = cookie.mid(start, end-start);
-        if (str=="YES")
-        {
-            emit authFinished(true, QString());
-        } else
-        {
-            emit authFinished(false, tr("Incorrect login or password"));
-        }
-    }
-    else
-    {
-        emit authFinished(false, tr("Network error: %1").arg(reply->errorString()));
     }
 }
