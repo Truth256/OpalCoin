@@ -32,7 +32,6 @@ signals:
     void finished(bool error, bool aborted, const QString &text);
 
 public slots:
-    void auth(const QString &region, const QString &email, const QString &password);
     void upload(const QString &region, const QString &filename, const QString &passw, const QString &descr);
     void abort();
 
