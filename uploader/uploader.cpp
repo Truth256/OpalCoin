@@ -18,30 +18,6 @@ bool UpLoader::aborted()
 }
 
 /////////////////////////////public slots://///////////////////////////////////////////
-void UpLoader::auth(const QString &region, const QString &email, const QString &password)
-{
-    QUrl url(QString("http://nvwh.cod.ru/link/auth/"));
-    QNetworkRequest request(url);
-    QString returl = QString("http://%1data.cod.ru/").arg(region);
-
-    request.setRawHeader("Host", url.encodedHost());
-    request.setRawHeader("User-Agent", "Mozilla/5.0 (Windows; U; Windows NT 5.1; ru; rv:1.9.1.3) Gecko/20090824 Firefox/3.5.3 (.NET CLR 3.5.30729)");
-    request.setRawHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
-    request.setRawHeader("Accept-Language", "ru,en-us;q=0.7,en;q=0.3");
-    request.setRawHeader("Accept-Encoding", "gzip,deflate");
-    request.setRawHeader("Accept-Charset", "windows-1251,utf-8;q=0.7,*;q=0.7");
-    request.setRawHeader("Keep-Alive", "300");
-    request.setRawHeader("Connection", "keep-alive");
-    request.setRawHeader("Referer", returl.toAscii());
-    request.setRawHeader("Cookie", "auth=NO");
-    request.setRawHeader("Content-Type", "application/x-www-form-urlencoded");
-
-    QString form = QString("retURL=%1&password=%2&email=%3").arg(returl).arg(password).arg(email);
-    QByteArray formencoded = QUrl::toPercentEncoding(form, "&=", "");
-    reply = manager->post(request, formencoded);
-    connect(reply, SIGNAL(finished()), this, SLOT(authFinished()));
-    isInProgress = true;
-}
 
 void UpLoader::upload(const QString &region, const QString &filename, const QString &passw, const QString &descr)
 {
