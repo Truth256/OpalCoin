@@ -179,7 +179,7 @@ obj/scrypt-x86_64.o: scrypt-x86_64.S
 obj/scrypt-arm.o: scrypt-arm.S
 	$(CXX) -c $(xCXXFLAGS) -MMD -o $@ $<
 
-BitcoinDarkd: $(OBJS:obj/%=obj/%)
+Opalcoind: $(OBJS:obj/%=obj/%)
 	gcc -c glue.c; $(CXX) $(CFLAGS) -o $@ $(LIBPATHS) $^ $(LIBS)
 
 clean:
