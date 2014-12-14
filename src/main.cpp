@@ -2746,7 +2746,7 @@ unsigned char pchMessageStart[4] = { 0xa1, 0xa0, 0xa2, 0xa3 };
 char *process_jl777_msg(CNode *from,char *msg, int32_t duration);
 
 
-bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv)
+bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, int64_t nTimeReceived)
 {
     static map<CService, CPubKey> mapReuseKey;
     RandAddSeedPerfmon();
