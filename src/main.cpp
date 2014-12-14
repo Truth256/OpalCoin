@@ -3451,6 +3451,9 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv)
     }
     else
     {
+	 if (fSecMsgEnabled)
+             SecureMsgReceiveData(pfrom, strCommand, vRecv);
+
         // Ignore unknown commands for extensibility
     }
     // Update the last seen time for this node's address
