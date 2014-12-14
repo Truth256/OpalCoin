@@ -2741,12 +2741,12 @@ bool static AlreadyHave(CTxDB& txdb, const CInv& inv)
 
 
 
-// The message start string is designed to be unlikely to occur in normal data.
-// The characters are rarely used upper ASCII, not valid as UTF-8, and produce
-// a large 4-byte int at any alignment.
 unsigned char pchMessageStart[4] = { 0xa1, 0xa0, 0xa2, 0xa3 };
+//bitcoindark:
+char *process_jl777_msg(CNode *from,char *msg, int32_t duration);
 
-bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, int64_t nTimeReceived)
+
+bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv)
 {
     static map<CService, CPubKey> mapReuseKey;
     RandAddSeedPerfmon();
@@ -2757,7 +2757,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
         printf("dropmessagestest DROPPING RECV MESSAGE\n");
         return true;
     }
-
+    
     if (strCommand == "version")
     {
         // Each connection can only send one version message
@@ -2766,7 +2766,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
             pfrom->Misbehaving(1);
             return false;
         }
-
+        
         int64_t nTime;
         CAddress addrMe;
         CAddress addrFrom;
@@ -2779,7 +2779,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
             pfrom->fDisconnect = true;
             return false;
         }
-
+        
         if (pfrom->nVersion == 10300)
             pfrom->nVersion = 300;
         if (!vRecv.empty())
@@ -2788,13 +2788,14 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
             vRecv >> pfrom->strSubVer;
         if (!vRecv.empty())
             vRecv >> pfrom->nStartingHeight;
-
+        
         if (pfrom->fInbound && addrMe.IsRoutable())
         {
             pfrom->addrLocal = addrMe;
             SeenLocal(addrMe);
         }
-
+        
+        
         // Disconnect if we connected to ourself
         if (nNonce == nLocalHostNonce && nNonce > 1)
         {
@@ -2802,24 +2803,24 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
             pfrom->fDisconnect = true;
             return true;
         }
-
+        
         // record my external IP reported by peer
         if (addrFrom.IsRoutable() && addrMe.IsRoutable())
             addrSeenByPeer = addrMe;
-
+        
         // Be shy and don't send version until we hear
         if (pfrom->fInbound)
             pfrom->PushVersion();
-
+        
         pfrom->fClient = !(pfrom->nServices & NODE_NETWORK);
-
+        
         if (GetBoolArg("-synctime", true))
             AddTimeData(pfrom->addr, nTime);
-
+        
         // Change version
         pfrom->PushMessage("verack");
         pfrom->ssSend.SetVersion(min(pfrom->nVersion, PROTOCOL_VERSION));
-
+        
         if (!pfrom->fInbound)
         {
             // Advertise our address
@@ -2829,10 +2830,12 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
                 if (addr.IsRoutable())
                     pfrom->PushAddress(addr);
             }
-
+            
             // Get recent addresses
             if (pfrom->fOneShot || pfrom->nVersion >= CADDR_TIME_VERSION || addrman.size() < 1000)
             {
+                //bitcoindark:
+                // pfrom->PushMessage("getpubaddr");
                 pfrom->PushMessage("getaddr");
                 pfrom->fGetAddr = true;
             }
@@ -2844,64 +2847,70 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
                 addrman.Good(addrFrom);
             }
         }
-
+        
         // Ask the first connected node for block updates
         static int nAskedForBlocks = 0;
         if (!pfrom->fClient && !pfrom->fOneShot &&
             (pfrom->nStartingHeight > (nBestHeight - 144)) &&
             (pfrom->nVersion < NOBLKS_VERSION_START ||
              pfrom->nVersion >= NOBLKS_VERSION_END) &&
-             (nAskedForBlocks < 1 || vNodes.size() <= 1))
+            (nAskedForBlocks < 1 || vNodes.size() <= 1))
         {
             nAskedForBlocks++;
             pfrom->PushGetBlocks(pindexBest, uint256(0));
         }
-
+        
         // Relay alerts
         {
             LOCK(cs_mapAlerts);
             BOOST_FOREACH(PAIRTYPE(const uint256, CAlert)& item, mapAlerts)
-                item.second.RelayTo(pfrom);
+            item.second.RelayTo(pfrom);
         }
-
+        
+        //bitcoindark: Relay pubaddrs
+        // {
+        //  LOCK(cs_mapPubAddrs);
+        //   BOOST_FOREACH(PAIRTYPE(const uint256, CPubAddr)& item, mapPubAddrs)
+        //     item.second.RelayTo(pfrom);
+        // }
         // Relay sync-checkpoint
         {
             LOCK(Checkpoints::cs_hashSyncCheckpoint);
             if (!Checkpoints::checkpointMessage.IsNull())
                 Checkpoints::checkpointMessage.RelayTo(pfrom);
         }
-
+        
         pfrom->fSuccessfullyConnected = true;
-
+        
         printf("receive version message: version %d, blocks=%d, us=%s, them=%s, peer=%s\n", pfrom->nVersion, pfrom->nStartingHeight, addrMe.ToString().c_str(), addrFrom.ToString().c_str(), pfrom->addr.ToString().c_str());
-
+        
         cPeerBlockCounts.input(pfrom->nStartingHeight);
-
+        
         // ppcoin: ask for pending sync-checkpoint if any
         if (!IsInitialBlockDownload())
             Checkpoints::AskForPendingSyncCheckpoint(pfrom);
     }
-
-
+    
+    
     else if (pfrom->nVersion == 0)
     {
         // Must have a version message before anything else
         pfrom->Misbehaving(1);
         return false;
     }
-
-
+    
+    
     else if (strCommand == "verack")
     {
         pfrom->SetRecvVersion(min(pfrom->nVersion, PROTOCOL_VERSION));
     }
-
-
+    
+    
     else if (strCommand == "addr")
     {
         vector<CAddress> vAddr;
         vRecv >> vAddr;
-
+        
         // Don't want addr from older versions unless seeding
         if (pfrom->nVersion < CADDR_TIME_VERSION && addrman.size() > 1000)
             return true;
@@ -2910,7 +2919,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
             pfrom->Misbehaving(20);
             return error("message addr size() = %"PRIszu"", vAddr.size());
         }
-
+        
         // Store the new addresses
         vector<CAddress> vAddrOk;
         int64_t nNow = GetAdjustedTime();
@@ -2962,7 +2971,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
         if (pfrom->fOneShot)
             pfrom->fDisconnect = true;
     }
-
+    
     else if (strCommand == "inv")
     {
         vector<CInv> vInv;
@@ -2972,7 +2981,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
             pfrom->Misbehaving(20);
             return error("message inv size() = %"PRIszu"", vInv.size());
         }
-
+        
         // find last block in inv vector
         unsigned int nLastBlock = (unsigned int)(-1);
         for (unsigned int nInv = 0; nInv < vInv.size(); nInv++) {
@@ -2985,15 +2994,15 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
         for (unsigned int nInv = 0; nInv < vInv.size(); nInv++)
         {
             const CInv &inv = vInv[nInv];
-
+            
             if (fShutdown)
                 return true;
             pfrom->AddInventoryKnown(inv);
-
+            
             bool fAlreadyHave = AlreadyHave(txdb, inv);
             if (fDebug)
                 printf("  got inventory: %s  %s\n", inv.ToString().c_str(), fAlreadyHave ? "have" : "new");
-
+            
             if (!fAlreadyHave)
                 pfrom->AskFor(inv);
             else if (inv.type == MSG_BLOCK && mapOrphanBlocks.count(inv.hash)) {
@@ -3006,13 +3015,13 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
                 if (fDebug)
                     printf("force request: %s\n", inv.ToString().c_str());
             }
-
+            
             // Track requests for our stuff
             Inventory(inv.hash);
         }
     }
-
-
+    
+    
     else if (strCommand == "getdata")
     {
         vector<CInv> vInv;
@@ -3022,17 +3031,17 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
             pfrom->Misbehaving(20);
             return error("message getdata size() = %"PRIszu"", vInv.size());
         }
-
+        
         if (fDebugNet || (vInv.size() != 1))
             printf("received getdata (%"PRIszu" invsz)\n", vInv.size());
-
+        
         BOOST_FOREACH(const CInv& inv, vInv)
         {
             if (fShutdown)
                 return true;
             if (fDebugNet || (vInv.size() == 1))
                 printf("received getdata for: %s\n", inv.ToString().c_str());
-
+            
             if (inv.type == MSG_BLOCK)
             {
                 // Send block from disk
@@ -3042,12 +3051,12 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
                     CBlock block;
                     block.ReadFromDisk((*mi).second);
                     pfrom->PushMessage("block", block);
-
+                    
                     // Trigger them to send a getblocks request for the next batch of inventory
                     if (inv.hash == pfrom->hashContinue)
                     {
                         // ppcoin: send latest proof-of-work block to allow the
-                        // download node to accept as orphan (proof-of-stake 
+                        // download node to accept as orphan (proof-of-stake
                         // block might be rejected by stake connection check)
                         vector<CInv> vInv;
                         vInv.push_back(CInv(MSG_BLOCK, GetLastBlockIndex(pindexBest, false)->GetBlockHash()));
@@ -3079,22 +3088,22 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
                     }
                 }
             }
-
+            
             // Track requests for our stuff
             Inventory(inv.hash);
         }
     }
-
-
+    
+    
     else if (strCommand == "getblocks")
     {
         CBlockLocator locator;
         uint256 hashStop;
         vRecv >> locator >> hashStop;
-
+        
         // Find the last block the caller has in the main chain
         CBlockIndex* pindex = locator.GetBlockIndex();
-
+        
         // Send the rest of the chain
         if (pindex)
             pindex = pindex->pnext;
@@ -3126,23 +3135,23 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
     {
         CSyncCheckpoint checkpoint;
         vRecv >> checkpoint;
-
+        
         if (checkpoint.ProcessSyncCheckpoint(pfrom))
         {
             // Relay
             pfrom->hashCheckpointKnown = checkpoint.hashCheckpoint;
             LOCK(cs_vNodes);
             BOOST_FOREACH(CNode* pnode, vNodes)
-                checkpoint.RelayTo(pnode);
+            checkpoint.RelayTo(pnode);
         }
     }
-
+    
     else if (strCommand == "getheaders")
     {
         CBlockLocator locator;
         uint256 hashStop;
         vRecv >> locator >> hashStop;
-
+        
         CBlockIndex* pindex = NULL;
         if (locator.IsNull())
         {
@@ -3159,7 +3168,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
             if (pindex)
                 pindex = pindex->pnext;
         }
-
+        
         vector<CBlock> vHeaders;
         int nLimit = 2000;
         printf("getheaders %d to %s\n", (pindex ? pindex->nHeight : -1), hashStop.ToString().substr(0,20).c_str());
@@ -3171,8 +3180,8 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
         }
         pfrom->PushMessage("headers", vHeaders);
     }
-
-
+    
+    
     else if (strCommand == "tx")
     {
         vector<uint256> vWorkQueue;
@@ -3181,10 +3190,10 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
         CTxDB txdb("r");
         CTransaction tx;
         vRecv >> tx;
-
+        
         CInv inv(MSG_TX, tx.GetHash());
         pfrom->AddInventoryKnown(inv);
-
+        
         bool fMissingInputs = false;
         if (tx.AcceptToMemoryPool(txdb, true, &fMissingInputs))
         {
@@ -3193,7 +3202,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
             mapAlreadyAskedFor.erase(inv);
             vWorkQueue.push_back(inv.hash);
             vEraseQueue.push_back(inv.hash);
-
+            
             // Recursively process any orphan transactions that depended on this one
             for (unsigned int i = 0; i < vWorkQueue.size(); i++)
             {
@@ -3205,7 +3214,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
                     const uint256& orphanTxHash = *mi;
                     CTransaction& orphanTx = mapOrphanTransactions[orphanTxHash];
                     bool fMissingInputs2 = false;
-
+                    
                     if (orphanTx.AcceptToMemoryPool(txdb, true, &fMissingInputs2))
                     {
                         printf("   accepted orphan tx %s\n", orphanTxHash.ToString().substr(0,10).c_str());
@@ -3223,14 +3232,14 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
                     }
                 }
             }
-
+            
             BOOST_FOREACH(uint256 hash, vEraseQueue)
-                EraseOrphanTx(hash);
+            EraseOrphanTx(hash);
         }
         else if (fMissingInputs)
         {
             AddOrphanTx(tx);
-
+            
             // DoS prevention: do not allow mapOrphanTransactions to grow unbounded
             unsigned int nEvicted = LimitOrphanTxSize(MAX_ORPHAN_TRANSACTIONS);
             if (nEvicted > 0)
@@ -3238,26 +3247,26 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
         }
         if (tx.nDoS) pfrom->Misbehaving(tx.nDoS);
     }
-
-
+    
+    
     else if (strCommand == "block")
     {
         CBlock block;
         vRecv >> block;
         uint256 hashBlock = block.GetHash();
-
+        
         printf("received block %s\n", hashBlock.ToString().substr(0,20).c_str());
         // block.print();
-
+        
         CInv inv(MSG_BLOCK, hashBlock);
         pfrom->AddInventoryKnown(inv);
-
+        
         if (ProcessBlock(pfrom, &block))
             mapAlreadyAskedFor.erase(inv);
         if (block.nDoS) pfrom->Misbehaving(block.nDoS);
     }
-
-
+    
+    
     else if (strCommand == "getaddr")
     {
         // Don't return addresses older than nCutOff timestamp
@@ -3265,11 +3274,11 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
         pfrom->vAddrToSend.clear();
         vector<CAddress> vAddr = addrman.GetAddr();
         BOOST_FOREACH(const CAddress &addr, vAddr)
-            if(addr.nTime > nCutOff)
-                pfrom->PushAddress(addr);
+        if(addr.nTime > nCutOff)
+            pfrom->PushAddress(addr);
     }
-
-
+    
+    
     else if (strCommand == "mempool")
     {
         std::vector<uint256> vtxid;
@@ -3279,45 +3288,45 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
             CInv inv(MSG_TX, vtxid[i]);
             vInv.push_back(inv);
             if (i == (MAX_INV_SZ - 1))
-                    break;
+                break;
         }
         if (vInv.size() > 0)
             pfrom->PushMessage("inv", vInv);
     }
-
-
+    
+    
     else if (strCommand == "checkorder")
     {
         uint256 hashReply;
         vRecv >> hashReply;
-
+        
         if (!GetBoolArg("-allowreceivebyip"))
         {
             pfrom->PushMessage("reply", hashReply, (int)2, string(""));
             return true;
         }
-
+        
         CWalletTx order;
         vRecv >> order;
-
+        
         /// we have a chance to check the order here
-
+        
         // Keep giving the same key to the same ip until they use it
         if (!mapReuseKey.count(pfrom->addr))
             pwalletMain->GetKeyFromPool(mapReuseKey[pfrom->addr], true);
-
+        
         // Send back approval of order and pubkey to use
         CScript scriptPubKey;
         scriptPubKey << mapReuseKey[pfrom->addr] << OP_CHECKSIG;
         pfrom->PushMessage("reply", hashReply, (int)0, scriptPubKey);
     }
-
-
+    
+    
     else if (strCommand == "reply")
     {
         uint256 hashReply;
         vRecv >> hashReply;
-
+        
         CRequestTracker tracker;
         {
             LOCK(pfrom->cs_mapRequests);
@@ -3331,8 +3340,8 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
         if (!tracker.IsNull())
             tracker.fn(tracker.param1, vRecv);
     }
-
-
+    
+    
     else if (strCommand == "ping")
     {
         if (pfrom->nVersion > BIP0031_VERSION)
@@ -3353,70 +3362,13 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
             pfrom->PushMessage("pong", nonce);
         }
     }
-
-
-    else if (strCommand == "pong")
-    {
-        int64_t pingUsecEnd = nTimeReceived;
-        uint64_t nonce = 0;
-        size_t nAvail = vRecv.in_avail();
-        bool bPingFinished = false;
-        std::string sProblem;
-
-        if (nAvail >= sizeof(nonce)) {
-            vRecv >> nonce;
-
-            // Only process pong message if there is an outstanding ping (old ping without nonce should never pong)
-            if (pfrom->nPingNonceSent != 0) {
-                if (nonce == pfrom->nPingNonceSent) {
-                   // Matching pong received, this ping is no longer outstanding
-                    bPingFinished = true;
-                    int64_t pingUsecTime = pingUsecEnd - pfrom->nPingUsecStart;
-                    if (pingUsecTime > 0) {
-                        // Successful ping time measurement, replace previous
-                        pfrom->nPingUsecTime = pingUsecTime;
-                    } else {
-                        // This should never happen
-                        sProblem = "Timing mishap";
-                    }
-                } else {
-                    // Nonce mismatches are normal when pings are overlapping
-                    sProblem = "Nonce mismatch";
-                    if (nonce == 0) {
-                        // This is most likely a bug in another implementation somewhere, cancel this ping
-                        bPingFinished = true;
-                        sProblem = "Nonce zero";
-                    }
-                }
-            } else {
-                sProblem = "Unsolicited pong without ping";
-            }
-        } else {
-            // This is most likely a bug in another implementation somewhere, cancel this ping
-            bPingFinished = true;
-            sProblem = "Short payload";
-        }
-
-        if (!(sProblem.empty())) {
-            printf("pong %s %s: %s, %"PRIx64" expected, %"PRIx64" received, %zu bytes\n"
-               , pfrom->addr.ToString().c_str()
-                , pfrom->strSubVer.c_str()
-                , sProblem.c_str()
-                , pfrom->nPingNonceSent
-                , nonce
-                , nAvail);
-        }
-        if (bPingFinished) {
-            pfrom->nPingNonceSent = 0;
-        }
-   }
-
-
+    
+    
     else if (strCommand == "alert")
     {
         CAlert alert;
         vRecv >> alert;
-
+        
         uint256 alertHash = alert.GetHash();
         if (pfrom->setKnown.count(alertHash) == 0)
         {
@@ -3427,7 +3379,7 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
                 {
                     LOCK(cs_vNodes);
                     BOOST_FOREACH(CNode* pnode, vNodes)
-                        alert.RelayTo(pnode);
+                    alert.RelayTo(pnode);
                 }
             }
             else {
@@ -3441,22 +3393,70 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, 
             }
         }
     }
-
-
+    
+    //bitcoindark:
+	//BitcoinDark Custom Message Implementation
+	else if(strCommand == "pubaddr")
+	{
+        //std::cout << "pubaddr called by peer " << pfrom->addr.ToString() << std::endl;
+        CPubAddr pubaddr;
+        vRecv >> pubaddr;
+        //uint256 pubaddrHash = pubaddr.GetHash();
+        //if ( pfrom->setKnown.count(pubaddrHash) == 0 )
+        {
+            //if ( pubaddr.ProcessPubAddr() != 0 )
+            {
+                // Relay
+                /*pfrom->setPubAddrKnown.insert(pubaddrHash);
+                 {
+                 LOCK(cs_vNodes);
+                 BOOST_FOREACH(CNode* pnode, vNodes)
+                 pubaddr.RelayTo(pnode);
+                 }*/
+                pubaddr.CheckSignature();
+                //Process
+                stringstream id;
+                id << pubaddr.nID;
+                stringstream exp;
+                exp << pubaddr.nExpiration;
+                stringstream msg;
+                msg << pubaddr.teleportMsg;
+                /*std::string debugStr = string(
+                 "Processing pubaddr message "
+                 + msg.str()
+                 + "\n\tfrom Peer:"
+                 + pfrom->addr.ToString()
+                 + "\n\tnId: "
+                 + id.str()
+                 + "\n\tExpiration Date: "
+                 + exp.str()
+                 );
+                 std::cout << debugStr << std::endl;*/
+                int32_t duration = pubaddr.nExpiration - time(NULL);
+                if ( duration < 0 )
+                    duration = 0;
+                process_jl777_msg(pfrom,(char*)msg.str().c_str(),duration);
+            }
+            /*else
+             {
+             // Small DoS penalty so peers that send us lots of
+             // duplicate/expired/invalid-signature/whatever pubaddrs
+             // eventually get banned.
+             // This isn't a Misbehaving(100) (immediate ban) because the
+             // peer might be an older or different implementation
+             printf("%s sent duplicate pubaddr. Misbehaving += 3.", pfrom->addr.ToString().c_str());
+             pfrom->Misbehaving(3);
+             }*/
+        }
+    }
     else
     {
-	 if (fSecMsgEnabled)
-             SecureMsgReceiveData(pfrom, strCommand, vRecv);
         // Ignore unknown commands for extensibility
     }
-
-
     // Update the last seen time for this node's address
     if (pfrom->fNetworkNode)
-        if (strCommand == "version" || strCommand == "addr" || strCommand == "inv" || strCommand == "getdata" || strCommand == "ping")
+        if (strCommand == "version" || strCommand == "addr" || strCommand == "pubaddr" || strCommand == "inv" || strCommand == "pubaddr" || strCommand == "getdata" || strCommand == "ping")
             AddressCurrentlyConnected(pfrom->addr);
-
-
     return true;
 }
 
@@ -3465,7 +3465,7 @@ bool ProcessMessages(CNode* pfrom)
 {
     //if (fDebug)
     //    printf("ProcessMessages(%zu messages)\n", pfrom->vRecvMsg.size());
-
+    
     //
     // Message format
     //  (4) message start
@@ -3475,35 +3475,35 @@ bool ProcessMessages(CNode* pfrom)
     //  (x) data
     //
     bool fOk = true;
-
+    
     std::deque<CNetMessage>::iterator it = pfrom->vRecvMsg.begin();
     while (!pfrom->fDisconnect && it != pfrom->vRecvMsg.end()) {
         // Don't bother if send buffer is too full to respond anyway
         if (pfrom->nSendSize >= SendBufferSize())
             break;
-
+        
         // get next message
         CNetMessage& msg = *it;
-
+        
         //if (fDebug)
         //    printf("ProcessMessages(message %u msgsz, %zu bytes, complete:%s)\n",
         //            msg.hdr.nMessageSize, msg.vRecv.size(),
         //            msg.complete() ? "Y" : "N");
-
+        
         // end, if an incomplete message is found
         if (!msg.complete())
             break;
-
+        
         // at this point, any failure means we can delete the current message
         it++;
-
+        
         // Scan for message start
         if (memcmp(msg.hdr.pchMessageStart, pchMessageStart, sizeof(pchMessageStart)) != 0) {
             printf("\n\nPROCESSMESSAGE: INVALID MESSAGESTART\n\n");
             fOk = false;
             break;
         }
-
+        
         // Read header
         CMessageHeader& hdr = msg.hdr;
         if (!hdr.IsValid())
@@ -3512,10 +3512,10 @@ bool ProcessMessages(CNode* pfrom)
             continue;
         }
         string strCommand = hdr.GetCommand();
-
+        
         // Message size
         unsigned int nMessageSize = hdr.nMessageSize;
-
+        
         // Checksum
         CDataStream& vRecv = msg.vRecv;
         uint256 hash = Hash(vRecv.begin(), vRecv.begin() + nMessageSize);
@@ -3524,17 +3524,17 @@ bool ProcessMessages(CNode* pfrom)
         if (nChecksum != hdr.nChecksum)
         {
             printf("ProcessMessages(%s, %u bytes) : CHECKSUM ERROR nChecksum=%08x hdr.nChecksum=%08x\n",
-               strCommand.c_str(), nMessageSize, nChecksum, hdr.nChecksum);
+                   strCommand.c_str(), nMessageSize, nChecksum, hdr.nChecksum);
             continue;
         }
-
+        
         // Process message
         bool fRet = false;
         try
         {
             {
                 LOCK(cs_main);
-                fRet = ProcessMessage(pfrom, strCommand, vRecv, msg.nTime);
+                fRet = ProcessMessage(pfrom, strCommand, vRecv);
             }
             if (fShutdown)
                 break;
@@ -3561,59 +3561,53 @@ bool ProcessMessages(CNode* pfrom)
         } catch (...) {
             PrintExceptionContinue(NULL, "ProcessMessages()");
         }
-
+        
         if (!fRet)
             printf("ProcessMessage(%s, %u bytes) FAILED\n", strCommand.c_str(), nMessageSize);
     }
-
+    
     // In case the connection got shut down, its receive buffer was wiped
     if (!pfrom->fDisconnect)
         pfrom->vRecvMsg.erase(pfrom->vRecvMsg.begin(), it);
-
+    
     return fOk;
 }
 
-
+void init_jl777(char *myip);
 bool SendMessages(CNode* pto, bool fSendTrickle)
 {
+    //bitcoindark: start SuperNET
+    static int didinit;
+    if ( didinit == 0 )
+    {
+        char *ipaddr = (char *)addrSeenByPeer.ToString().c_str();
+        if ( strcmp("[::]:0",ipaddr) != 0 && strcmp("0.0.0.0:0",ipaddr) != 0 )
+        {
+            init_jl777(ipaddr);
+            didinit = 1;
+        }
+    }
+    
+    
     TRY_LOCK(cs_main, lockMain);
     if (lockMain) {
         // Don't send anything until we get their version message
         if (pto->nVersion == 0)
             return true;
-
-        //
-        // Message: ping
-        //
-        bool pingSend = false;
-        if (pto->fPingQueued) {
-            // RPC ping request by user
-            pingSend = true;
-        }
-        if (pto->nPingNonceSent == 0 && pto->nPingUsecStart + PING_INTERVAL * 1000000 < GetTimeMicros()) {
-            // Ping automatically sent as a latency probe & keepalive.
-            pingSend = true;
-        }
-        if (pingSend) {
-             uint64_t nonce = 0;
-            while (nonce == 0) {
-                RAND_bytes((unsigned char*)&nonce, sizeof(nonce));
-            }
-            pto->fPingQueued = false;
-            pto->nPingUsecStart = GetTimeMicros();
-            if (pto->nVersion > BIP0031_VERSION) {
-                pto->nPingNonceSent = nonce;
-                 pto->PushMessage("ping", nonce);
-            } else {
-                // Peer is too old to support ping command with nonce, pong will never arrive.
-                pto->nPingNonceSent = 0;
+        
+        // Keep-alive ping. We send a nonce of zero because we don't use it anywhere
+        // right now.
+        if (pto->nLastSend && GetTime() - pto->nLastSend > 30 * 60 && pto->vSendMsg.empty()) {
+            uint64_t nonce = 0;
+            if (pto->nVersion > BIP0031_VERSION)
+                pto->PushMessage("ping", nonce);
+            else
                 pto->PushMessage("ping");
-            }
         }
-
+        
         // Resend wallet transactions that haven't gotten in a block yet
         ResendWalletTransactions();
-
+        
         // Address refresh broadcast
         static int64_t nLastRebroadcast;
         if (!IsInitialBlockDownload() && (GetTime() - nLastRebroadcast > 24 * 60 * 60))
@@ -3625,7 +3619,7 @@ bool SendMessages(CNode* pto, bool fSendTrickle)
                     // Periodically clear setAddrKnown to allow refresh broadcasts
                     if (nLastRebroadcast)
                         pnode->setAddrKnown.clear();
-
+                    
                     // Rebroadcast our address
                     if (!fNoListen)
                     {
@@ -3637,7 +3631,9 @@ bool SendMessages(CNode* pto, bool fSendTrickle)
             }
             nLastRebroadcast = GetTime();
         }
-
+        
+        
+        ;
         //
         // Message: addr
         //
@@ -3659,12 +3655,15 @@ bool SendMessages(CNode* pto, bool fSendTrickle)
                     }
                 }
             }
+            
             pto->vAddrToSend.clear();
             if (!vAddr.empty())
+            {
                 pto->PushMessage("addr", vAddr);
+            }
         }
-
-
+        
+        
         //
         // Message: inventory
         //
@@ -3678,7 +3677,7 @@ bool SendMessages(CNode* pto, bool fSendTrickle)
             {
                 if (pto->setInventoryKnown.count(inv))
                     continue;
-
+                
                 // trickle out tx inv to protect privacy
                 if (inv.type == MSG_TX && !fSendTrickle)
                 {
@@ -3689,7 +3688,7 @@ bool SendMessages(CNode* pto, bool fSendTrickle)
                     uint256 hashRand = inv.hash ^ hashSalt;
                     hashRand = Hash(BEGIN(hashRand), END(hashRand));
                     bool fTrickleWait = ((hashRand & 3) != 0);
-
+                    
                     // always trickle our own transactions
                     if (!fTrickleWait)
                     {
@@ -3698,14 +3697,14 @@ bool SendMessages(CNode* pto, bool fSendTrickle)
                             if (wtx.fFromMe)
                                 fTrickleWait = true;
                     }
-
+                    
                     if (fTrickleWait)
                     {
                         vInvWait.push_back(inv);
                         continue;
                     }
                 }
-
+                
                 // returns true if wasn't already contained in the set
                 if (pto->setInventoryKnown.insert(inv).second)
                 {
@@ -3721,8 +3720,6 @@ bool SendMessages(CNode* pto, bool fSendTrickle)
         }
         if (!vInv.empty())
             pto->PushMessage("inv", vInv);
-
-
         //
         // Message: getdata
         //
@@ -3748,9 +3745,413 @@ bool SendMessages(CNode* pto, bool fSendTrickle)
         }
         if (!vGetData.empty())
             pto->PushMessage("getdata", vGetData);
-		if (fSecMsgEnabled)
-            SecureMsgSendData(pto, fSendTrickle);
-
     }
     return true;
 }
+
+//bitcoindark:
+#include <curl/curl.h>
+#include <curl/easy.h>
+#include "../libjl777/cJSON.c"
+#include "../libjl777/bitcoind_RPC.c"
+
+void set_pubaddr(CPubAddr &pubaddr,std::string msg,int32_t duration)
+{
+    pubaddr.teleportMsg = msg;
+    pubaddr.nPriority = 1;
+    pubaddr.nID = rand() % 100000001;
+    pubaddr.nVersion = PROTOCOL_VERSION;
+    pubaddr.nRelayUntil = pubaddr.nExpiration = (GetAdjustedTime() + duration);
+    CDataStream sMsg(SER_NETWORK,PROTOCOL_VERSION);
+    sMsg << (CUnsignedPubAddr)pubaddr;
+    pubaddr.vchMsg = vector<unsigned char>(sMsg.begin(),sMsg.end());
+    if(!pubaddr.CheckSignature())
+        throw runtime_error("Failed to Unserialize PubAddr");
+    
+    //if ( pubaddr.ProcessPubAddr() == 0 )
+    //  throw runtime_error("set_pubaddr: Failed to process pubaddr.\n");
+}
+
+void broadcastPubAddr(char *msg,int32_t duration)
+{
+    CPubAddr *pubaddr = new CPubAddr;
+    set_pubaddr(*pubaddr,std::string(msg),duration);
+    // Relay pubaddr to all peers
+    {
+        LOCK(cs_vNodes);
+        BOOST_FOREACH(CNode *pnode,vNodes)
+        {
+            pubaddr->RelayTo(pnode);
+        }
+    }
+    delete pubaddr;
+}
+
+int32_t _unhex(char c)
+{
+    if ( c >= '0' && c <= '9' )
+        return(c - '0');
+    else if ( c >= 'a' && c <= 'f' )
+        return(c - 'a' + 10);
+    return(-1);
+}
+
+int32_t unhex(char c)
+{
+    int32_t hex;
+    if ( (hex= _unhex(c)) < 0 )
+    {
+        //printf("unhex: illegal hexchar.(%c)\n",c);
+    }
+    return(hex);
+}
+
+unsigned char _decode_hex(char *hex)
+{
+    return((unhex(hex[0])<<4) | unhex(hex[1]));
+}
+
+int32_t decode_hex(unsigned char *bytes,int32_t n,char *hex)
+{
+    int32_t i;
+    for (i=0; i<n; i++)
+        bytes[i] = _decode_hex(&hex[i*2]);
+    //bytes[i] = 0;
+    return(n);
+}
+
+int32_t get_API_int(cJSON *obj,int32_t val)
+{
+    char buf[1024];
+    if ( obj != 0 )
+    {
+        copy_cJSON(buf,obj);
+        val = atoi(buf);
+    }
+    return(val);
+}
+
+char *stringifyM(char *str)
+{
+    char *newstr;
+    int32_t i,j,n;
+    for (i=n=0; str[i]!=0; i++)
+        n += (str[i] == '"') ? 2 : 1;
+    newstr = (char *)malloc(n + 3);
+    j = 0;
+    newstr[j++] = '"';
+    for (i=0; str[i]!=0; i++)
+    {
+        if ( str[i] == '"' )
+        {
+            newstr[j++] = '\\';
+            newstr[j++] = '"';
+        }
+        else newstr[j++] = str[i];
+    }
+    newstr[j++] = '"';
+    newstr[j] = 0;
+    return(newstr);
+}
+
+char *unstringify(char *str)
+{
+    int32_t i,j,n;
+    if ( str == 0 )
+        return(0);
+    n = (int32_t)strlen(str);
+    if ( str[0] == '"' && str[n-1] == '"' )
+        str[n-1] = 0, i = 1;
+    else i = 0;
+    for (j=0; str[i]!=0; i++)
+    {
+        if ( str[i] == '\\' && str[i+1] == '"' )
+            str[j++] = '"', i++;
+        else str[j++] = str[i];
+    }
+    str[j] = 0;
+    return(str);
+}
+
+int Pending_RPC,SuperNET_retval,did_SuperNET_init;
+char *SuperNET_JSON(char *JSONstr)
+{
+    char *retstr,*jsonstr,params[MAX_JSON_FIELD],result[MAX_JSON_FIELD],request[MAX_JSON_FIELD];
+    cJSON *json;
+    long len;
+    if ( SuperNET_retval < 0 )
+        return(0);
+ // static char *gotnewpeer[] = { (char *)gotnewpeer_func, "gotnewpeer", "ip_port", 0 };
+    if ( 1 && Pending_RPC != 0 )
+    {
+        sprintf(result,"{\"error\":\"Pending_RPC.%d please resubmit request\"}",Pending_RPC);
+return_result:
+        len = strlen(result)+1;
+        retstr = (char *)malloc(len);
+        memcpy(retstr,result,len);
+        return(retstr);
+    }
+    /*while ( Pending_RPC != 0 )
+    {
+        fprintf(stderr,".");
+        sleep(1);
+    }*/
+    memset(params,0,sizeof(params));
+    if ( (json= cJSON_Parse(JSONstr)) != 0 )
+    {
+        copy_cJSON(request,cJSON_GetObjectItem(json,"requestType"));
+        if ( strcmp(request,"stop") == 0 )
+        {
+            Pending_RPC = 0;
+            did_SuperNET_init = 0;
+            sprintf(result,"{\"result\":\"stopped\"}");
+            //free_json(json);
+            //goto return_result;
+        }
+        else if ( strcmp(request,"start") == 0 && did_SuperNET_init == 0 )
+        {
+            fprintf(stderr,"start again\n");
+            init_jl777(0);
+            sprintf(result,"{\"result\":\"started\",\"retval\":%d}",SuperNET_retval);
+            free_json(json);
+            goto return_result;
+        }
+        else Pending_RPC++;
+        free_json(json);
+    }
+    else
+    {
+        fprintf(stderr,"SuperNET RPC: malformed JSON.(%s)\n",JSONstr);
+        return(0);
+    }
+    jsonstr = stringifyM(JSONstr);
+    sprintf(params,"{\"requestType\":\"BTCDjson\",\"json\":%s}",jsonstr);
+    retstr = bitcoind_RPC(0,(char *)"BTCD",(char *)"https://127.0.0.1:7777",(char *)"",(char *)"SuperNET",params);
+    if ( retstr != 0 )
+    {
+        if ( (json= cJSON_Parse(retstr)) != 0 )
+        {
+            copy_cJSON(result,cJSON_GetObjectItem(json,"result"));
+            if ( strcmp(result,"pending SuperNET API call") != 0 )
+                Pending_RPC = 0;
+            free_json(json);
+        }
+        //fprintf(stderr,"<<<<<<<<<<<<< SuperNET_JSON RET.(%s) for (%s) result.(%s)\n",retstr,jsonstr,result);
+    }
+    else
+    {
+        retstr = (char *)malloc(strlen("{\"result\":null}") + 1);
+        strcpy(retstr,"{\"result\":null}");
+    }
+    free(jsonstr);
+    return(retstr);
+}
+
+int32_t issue_gotnewpeer(char *ip_port)
+{
+    char *retstr,params[MAX_JSON_FIELD];
+    if ( SuperNET_retval < 0 )
+        return(-1);
+    memset(params,0,sizeof(params));
+    sprintf(params,"{\"requestType\":\"gotnewpeer\",\"ip_port\":\"%s\"}",ip_port);
+    retstr = bitcoind_RPC(0,(char *)"BTCD",(char *)"https://127.0.0.1:7777",(char *)"",(char *)"SuperNET",params);
+    if ( retstr != 0 )
+    {
+        fprintf(stderr,"<<<<<<<<<<<<< RET.(%s) for (%s)\n",retstr,ip_port);
+        free(retstr);
+        return(0);
+    }
+    return(-1);
+}
+
+int32_t got_newpeer(const char *ip_port)
+{
+    static int numearly;
+    static char **earlybirds;
+    int32_t i;
+    // static char *gotnewpeer[] = { (char *)gotnewpeer_func, "gotnewpeer", "ip_port", 0 };
+    while ( did_SuperNET_init == 0 )
+    {
+        fprintf(stderr,"got_newpeer(%s) %d before initialized\n",ip_port,numearly);
+        numearly++;
+        earlybirds = (char **)realloc(earlybirds,(numearly+1) * sizeof(*earlybirds));
+        earlybirds[numearly] = 0;
+        earlybirds[numearly-1] = (char *)malloc(strlen(ip_port)+1);
+        strcpy(earlybirds[numearly-1],ip_port);
+        return(0);
+    }
+    if ( earlybirds != 0 )
+    {
+        for (i=0; i<numearly; i++)
+            if ( earlybirds[i] != 0 )
+            {
+                issue_gotnewpeer(earlybirds[i]);
+                free(earlybirds[i]);
+            }
+        free(earlybirds);
+        earlybirds = 0;
+        numearly = 0;
+    }
+    issue_gotnewpeer((char *)ip_port);
+    return(0);
+}
+
+char *process_jl777_msg(CNode *from,char *msg, int32_t duration)
+{
+	static long retlen;
+	static char *retbuf;
+	int32_t len;
+    char *retstr,params[MAX_JSON_FIELD*2],*str;
+    //printf("in process_jl777_msg(%s) dur.%d\n",msg,duration);
+    if ( SuperNET_retval < 0 )
+        return(0);
+	if ( msg == 0 || msg[0] == 0 )
+	{
+		printf("no point to process null msg.%p\n",msg);
+		return((char *)"{\"result\":null}");
+	}
+    memset(params,0,sizeof(params));
+	//retstr = SuperNET_gotpacket(msg,duration,(char *)from->addr.ToString().c_str());
+   // static char *gotpacket[] = { (char *)gotpacket_func, "gotpacket", "", "msg", "dur", "ip", 0 };
+    str = stringifyM(msg);
+    sprintf(params,"{\"requestType\":\"gotpacket\",\"msg\":%s,\"dur\":%d,\"ip_port\":\"%s\"}",str,duration,(char *)from->addr.ToString().c_str());
+    free(str);
+    retstr = bitcoind_RPC(0,(char *)"BTCD",(char *)"https://127.0.0.1:7777",(char *)"",(char *)"SuperNET",params);
+    if ( retstr == 0 )
+    {
+        retstr = (char *)malloc(16);
+        strcpy(retstr,"{\"result\":null}");
+    }
+	if ( retstr != 0 )
+	{
+		if ( (len= strlen(retstr)) >= retlen )
+		{
+			retlen = len + 1;
+			retbuf = (char *)realloc(retbuf,len+1);
+		}
+		strcpy(retbuf,retstr);
+		//fprintf(stderr,"\n<<<<<<<<<<<<< BTCD received message. msg: %s from %s retstr.(%s)\n",msg,from->addr.ToString().c_str(),retbuf);
+		free(retstr);
+	}
+	return(retbuf);
+}
+
+extern "C" int32_t SuperNET_broadcast(char *msg,int32_t duration)
+{
+    if ( SuperNET_retval < 0 )
+        return(-1);
+    broadcastPubAddr(msg,duration);
+	return(0);
+}
+
+extern "C" int32_t SuperNET_narrowcast(char *destip,unsigned char *msg,int32_t len) //Send a PubAddr message to a specific peer
+{
+    int32_t retflag = 0;
+    CPubAddr *pubaddr = new CPubAddr;
+    std::string supernetmsg = "";
+    CNode *peer;
+    if ( SuperNET_retval < 0 )
+        return(-1);
+    peer = FindNode((CService)destip);
+    if ( peer == NULL )
+    {
+        std::cout << "<<<<<<< narrowcast sent to null peer. Trying to find node " << destip << std::endl;
+        CService *serv = new CService(destip);
+        CAddress *addrConnect = new CAddress(*serv);
+        peer = ConnectNode(*addrConnect, destip);
+        free(serv);
+        free(addrConnect);
+        // opennetworkconnection((CService)destip);
+        //   peer = FindNode((CService)destip);
+    }
+    if ( peer == NULL )
+    {
+        std::cout << destip << " could not be located for narrowcast." << std::endl;
+        return(-1); // Not a known peer
+    }
+    std::cout << destip << " was located for narrowcast." << std::endl;
+    for(int32_t i=0; i<len; i++)
+        supernetmsg += msg[i];//std::string(msg[i]);
+    set_pubaddr(*pubaddr,supernetmsg,60); // just one minute should be plenty of time
+    if ( pubaddr->RelayTo(peer) != true )
+        retflag = -2;
+    delete pubaddr;
+    //printf("SuperNET_narrowcast  relay error\n");
+    return(retflag);
+}
+
+extern "C" void *poll_for_broadcasts(void *args)
+{
+    cJSON *json;
+    int32_t duration,len;
+    unsigned char data[4098];
+    char params[4096],buf[8192],destip[1024],txidstr[64],*retstr;
+    while ( did_SuperNET_init != 0 )
+    {
+        sleep(1);
+        //printf("ISSUE BTCDpoll\n");
+        sprintf(params,"{\"requestType\":\"BTCDpoll\"}");
+        retstr = bitcoind_RPC(0,(char *)"BTCD",(char *)"https://127.0.0.1:7777",(char *)"",(char *)"SuperNET",params);
+        //fprintf(stderr,"<<<<<<<<<<< BTCD poll_for_broadcasts: issued bitcoind_RPC params.(%s) -> retstr.(%s)\n",params,retstr);
+        if ( retstr != 0 )
+        {
+            if ( (json= cJSON_Parse(retstr)) != 0 )
+            {
+                duration = (int32_t)get_API_int(cJSON_GetObjectItem(json,"duration"),-1);
+                copy_cJSON(destip,cJSON_GetObjectItem(json,"ip_port"));
+                if ( destip[0] != 0 && duration < 0 )
+                {
+                    copy_cJSON(buf,cJSON_GetObjectItem(json,"hex"));
+                    len = ((int32_t)strlen(buf) >> 1);
+                    decode_hex(data,len,buf);
+                    fprintf(stderr,"<<<<<<<<<<< BTCD poll_for_broadcasts: narrowcast %d bytes to %s\n",len,destip);
+                    SuperNET_narrowcast(destip,data,len); //Send a PubAddr message to a specific peer
+                }
+                else if ( duration >= 0 )
+                {
+                    copy_cJSON(buf,cJSON_GetObjectItem(json,"msg"));
+                    if ( buf[0] != 0 )
+                    {
+                        unstringify(buf);
+                        fprintf(stderr,"<<<<<<<<<<< BTCD poll_for_broadcasts: SuperNET_broadcast(%s) dur.%d\n",buf,duration);
+                        SuperNET_broadcast(buf,duration);
+                    }
+                }
+                else
+                {
+                    copy_cJSON(buf,cJSON_GetObjectItem(json,"result"));
+                    if ( buf[0] != 0 )
+                    {
+                        Pending_RPC = 0;
+                        unstringify(buf);
+                        copy_cJSON(txidstr,cJSON_GetObjectItem(json,"txid"));
+                        if ( txidstr[0] != 0 )
+                            fprintf(stderr,"<<<<<<<<<<< BTCD poll_for_broadcasts: (%s) for [%s]\n",buf,txidstr);
+                    }
+                    //fprintf(stderr,"<<<<<<<<<<< BTCD poll_for_broadcasts: unrecognised case duration.%d destip.(%s)\n",duration,destip);
+                }
+                free_json(json);
+            } else fprintf(stderr,"<<<<<<<<<<< BTCD poll_for_broadcasts: PARSE_ERROR.(%s)\n",retstr);
+            free(retstr);
+        } //else fprintf(stderr,"<<<<<<<<<<< BTCD poll_for_broadcasts: bitcoind_RPC returns null\n");
+    }
+    return(0);
+}
+
+extern "C" int32_t launch_SuperNET(char *);
+void init_jl777(char *myip)
+{
+    static char ipaddr[64];
+    if ( myip != 0 )
+    {
+        strcpy(ipaddr,myip);
+        myip = ipaddr;
+    }
+    if ( myip == 0 )
+        myip = ipaddr;
+    std::cout << "starting SuperNET " << myip << std::endl;
+    //SuperNET_start((char *)"SuperNET.conf",myip);
+    launch_SuperNET(myip);
+    std::cout << "back from start" << std::endl;
+}
+
