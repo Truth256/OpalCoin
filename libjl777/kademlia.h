@@ -193,7 +193,7 @@ int32_t calc_bestdist(uint64_t keyhash)
     return(bestdist);
 }
 
-uint64_t _send_kademlia_cmd(int32_t encrypted,struct pserver_info *pserver,char *cmdstr,char *NXTACCTSECRET,unsigned char *data,int32_t datalen)
+uint64_t _send_kademlia_cmd(int32_t queueflag,int32_t encrypted,struct pserver_info *pserver,char *cmdstr,char *NXTACCTSECRET,unsigned char *data,int32_t datalen)
 {
     int32_t len;// = (int32_t)strlen(cmdstr);
     char _tokbuf[4096];
@@ -206,7 +206,7 @@ uint64_t _send_kademlia_cmd(int32_t encrypted,struct pserver_info *pserver,char 
     len = construct_tokenized_req(_tokbuf,cmdstr,NXTACCTSECRET);
     if ( Debuglevel > 1 )
         printf(">>>>>>>> directsend.[%s] encrypted.%d -> (%s)\n",_tokbuf,encrypted,pserver->ipaddr);
-    txid = directsend_packet(encrypted,pserver,_tokbuf,len,data,datalen);
+    txid = directsend_packet(queueflag,encrypted,pserver,_tokbuf,len,data,datalen);
     return(txid);
 }
 
@@ -248,26 +248,37 @@ int32_t gen_pingstr(char *cmdstr,int32_t completeflag)
     } else return(0);
 }
 
-void send_to_ipaddr(int32_t tokenizeflag,char *ipaddr,char *jsonstr,char *NXTACCTSECRET)
+void send_to_ipaddr(uint16_t bridgeport,int32_t tokenizeflag,char *ipaddr,char *jsonstr,char *NXTACCTSECRET)
 {
     char _tokbuf[MAX_JSON_FIELD];
     struct pserver_info *pserver;
     struct sockaddr destaddr;
     struct nodestats *stats;
-    int32_t port;
-    pserver = get_pserver(0,ipaddr,0,0);
-    stats = get_nodestats(pserver->nxt64bits);
-    if ( stats != 0 )
-        port = stats->supernet_port;
-    else port = 0;
-    if ( port == 0 )
-        port = SUPERNET_PORT;
+    //struct coin_info *cp = get_coin_info("BTCD");
+    int32_t port,isbridge;
+    if ( bridgeport == 0 )
+    {
+        pserver = get_pserver(0,ipaddr,0,0);
+        stats = get_nodestats(pserver->nxt64bits);
+        if ( stats != 0 )
+            port = stats->supernet_port;
+        else port = 0;
+        if ( port == 0 )
+            port = SUPERNET_PORT;
+        isbridge = 0;
+    }
+    else
+    {
+        port = bridgeport;
+        isbridge = 1;
+    }
     uv_ip4_addr(ipaddr,port,(struct sockaddr_in *)&destaddr);
     if ( tokenizeflag != 0 )
         construct_tokenized_req(_tokbuf,jsonstr,NXTACCTSECRET);
     else safecopy(_tokbuf,jsonstr,sizeof(_tokbuf));
-    fprintf(stderr,"send_to_ipaddr.(%s)\n",_tokbuf);
-    portable_udpwrite(0,(struct sockaddr *)&destaddr,Global_mp->udp,_tokbuf,strlen(_tokbuf)+1,ALLOCWR_ALLOCFREE);
+    if ( Debuglevel > 2 )
+        fprintf(stderr,"send_to_ipaddr.(%s) isbridge.%d -> %s:%d\n",_tokbuf,isbridge,ipaddr,port);
+    portable_udpwrite(0,(struct sockaddr *)&destaddr,isbridge,_tokbuf,strlen(_tokbuf)+1,ALLOCWR_ALLOCFREE);
 }
 
 int32_t filter_duplicate_kadcmd(char *cmdstr,char *key,char *datastr,uint64_t nxt64bits)
@@ -341,7 +352,7 @@ uint64_t send_kademlia_cmd(uint64_t nxt64bits,struct pserver_info *pserver,char 
         printf("send_kademlia_cmd.(%s) No destination\n",kadcmd);
         return(0);
     }
-    if ( 0 && (pserver->nxt64bits == cp->privatebits || pserver->nxt64bits == cp->srvpubnxtbits) )
+    if ( 1 && (pserver->nxt64bits == cp->privatebits || pserver->nxt64bits == cp->srvpubnxtbits) )
     {
         printf("no point to send yourself (%s) dest.%llu pub.%llu srvpub.%llu\n",kadcmd,(long long)pserver->nxt64bits,(long long)cp->privatebits,(long long)cp->srvpubnxtbits);
         return(0);
@@ -357,7 +368,7 @@ uint64_t send_kademlia_cmd(uint64_t nxt64bits,struct pserver_info *pserver,char 
             stats->numpings++;
         }
         gen_pingstr(cmdstr,1);
-        send_to_ipaddr(1,pserver->ipaddr,cmdstr,NXTACCTSECRET);
+        send_to_ipaddr(0,1,pserver->ipaddr,cmdstr,NXTACCTSECRET);
         return(0);
     }
     else
@@ -385,7 +396,7 @@ uint64_t send_kademlia_cmd(uint64_t nxt64bits,struct pserver_info *pserver,char 
     data = replace_datafield(cmdstr,databuf,&datalen,datastr);
     strcat(cmdstr,"}");
     if ( key == 0 || key[0] == 0 || filter_duplicate_kadcmd(cmdstr,key,datastr,nxt64bits) == 0 )
-        return(_send_kademlia_cmd(encrypted,pserver,cmdstr,NXTACCTSECRET,data,datalen));
+        return(_send_kademlia_cmd(!prevent_queueing(kadcmd),encrypted,pserver,cmdstr,NXTACCTSECRET,data,datalen));
     return(0);
 }
 
@@ -706,7 +717,7 @@ char *kademlia_storedata(char *previpaddr,char *verifiedNXTaddr,char *NXTACCTSEC
             dist = bitweight(destbits ^ keybits);
             if ( ismynxtbits(destbits) == 0 && dist < mydist )
             {
-                printf("store i.%d of %d, (%llu) dist.%d vs mydist.%d\n",i,n,(long long)destbits,dist,mydist);
+                printf("store i.%d of %d, (%llu) dist.%d vs mydist.%d srv.%llx key.%llx (%s) %llu dest.%llx\n",i,n,(long long)destbits,dist,mydist,(long long)cp->srvpubnxtbits,(long long)keybits,key,(long long)calc_nxt64bits(key),(long long)destbits);
                 txid = send_kademlia_cmd(destbits,0,"store",NXTACCTSECRET,key,datastr);
                 z++;
             }
@@ -734,7 +745,7 @@ char *kademlia_havenode(int32_t valueflag,char *previpaddr,char *verifiedNXTaddr
         printf("havenode datastr too big.%ld\n",strlen(value));
         return(0);
     }
-   keyhash = calc_nxt64bits(key);
+    keyhash = calc_nxt64bits(key);
     mydist = bitweight(cp->srvpubnxtbits ^ keyhash);
     if ( key != 0 && key[0] != 0 && value != 0 && value[0] != 0 && (array= cJSON_Parse(value)) != 0 )
     {
@@ -817,7 +828,7 @@ cJSON *gen_find_nodejson(char *NXTaddr)
     return(item);
 }
 
-void passthrough_packet(char *destNXTaddr,char *origargstr,char *datastr)
+void passthrough_packet(int32_t queueflag,char *destNXTaddr,char *origargstr,char *datastr)
 {
     int32_t onionize(char *hopNXTaddr,unsigned char *maxbuf,unsigned char *encoded,char *destNXTaddr,unsigned char **payloadp,int32_t len);
     int32_t len,datalen;
@@ -834,7 +845,7 @@ void passthrough_packet(char *destNXTaddr,char *origargstr,char *datastr)
     memset(encodedF,0,sizeof(encodedF));
     len = onionize(hopNXTaddr,maxbuf,encodedF,destNXTaddr,&outbuf,len);
     len = onionize(hopNXTaddr,maxbuf,0,destNXTaddr,&outbuf,len);
-    route_packet(1,0,hopNXTaddr,outbuf,len);
+    route_packet(queueflag,1,0,hopNXTaddr,outbuf,len);
 }
 
 void gen_havenode_str(char *jsonstr,uint64_t *sortbuf,int32_t n)
@@ -959,7 +970,7 @@ char *kademlia_find(char *cmd,char *previpaddr,char *verifiedNXTaddr,char *NXTAC
                             if ( np->stats.ipbits != 0 && np->stats.ipbits != calc_ipbits(previpaddr) )
                             {
                                 if ( remoteflag != 0 && origargstr != 0 )
-                                    passthrough_packet(destNXTaddr,origargstr,datastr);
+                                    passthrough_packet(!prevent_queueing(cmd),destNXTaddr,origargstr,datastr);
                                 else txid = send_kademlia_cmd(destbits,0,cmd,NXTACCTSECRET,key,datastr);
                                 if ( z++ > KADEMLIA_NUMK )
                                     break;

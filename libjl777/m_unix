@@ -1,16 +1,16 @@
 pkill SuperNET
-./BitcoinDarkd stop
+./opalcoind stop
 pkill SuperNET
 git pull
 sleep 4
 ps aux | grep SuperNET
-ps aux | grep BitcoinDarkd
+ps aux | grep opalcoind
 echo "there should only be the entries for grep in the above lines"
 rm SuperNET
 make SuperNET
 if make btcd; then
-	rm ~/.BitcoinDark/debug.log
-	./BitcoinDarkd
+	rm ~/.opalcoin/debug.log
+	./opalcoind
 else
 	echo "error building"
 fi

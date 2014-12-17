@@ -23,7 +23,7 @@
 #define PEER_TIMEOUT 0x40
 #define PEER_FINISHED 0x80
 #define PEER_EXPIRATION (60 * 1000.)
-
+#define MAX_UDPQUEUE_MILLIS 7
 
 #define ALLOCWR_DONTFREE 0
 #define ALLOCWR_ALLOCFREE 1
@@ -48,7 +48,16 @@ struct write_req_t
     struct sockaddr addr;
     uv_udp_t *udp;
     uv_buf_t buf;
-    int32_t allocflag,queuetime;
+    int32_t allocflag,isbridge;
+    float queuetime;
+};
+
+struct udp_entry
+{
+    struct sockaddr addr;
+    void *buf;
+    uv_udp_t *udp;
+    int32_t len,internalflag;
 };
 
 struct udp_queuecmd
@@ -58,6 +67,41 @@ struct udp_queuecmd
     char *decoded;
     uint32_t previpbits,valid;
 };
+
+int32_t prevent_queueing(char *cmd)
+{
+    if ( strcmp("ping",cmd) == 0 || strcmp("pong",cmd) == 0 || strcmp("getdb",cmd) == 0 ||
+        strcmp("sendfrag",cmd) == 0 || strcmp("gotfrag",cmd) == 0 ||
+        strcmp("genmultisig",cmd) == 0 || strcmp("getmsigpubkey",cmd) == 0 || strcmp("setmsigpubkey",cmd) == 0 ||
+        0 )
+        return(1);
+    return(0);
+}
+
+void set_handler_fname(char *fname,char *handler,char *name)
+{
+    sprintf(fname,"archive/%s_%s",name,handler);
+}
+
+int32_t load_handler_fname(void *dest,int32_t len,char *handler,char *name)
+{
+    FILE *fp;
+    int32_t retval = -1;
+    char fname[1024];
+    set_handler_fname(fname,handler,name);
+    if ( (fp= fopen(fname,"rb")) != 0 )
+    {
+        fseek(fp,0,SEEK_END);
+        if ( ftell(fp) == len )
+        {
+            rewind(fp);
+            if ( fread(dest,1,len,fp) == len )
+                retval = len;
+        }
+        fclose(fp);
+    }
+    return(retval);
+}
 
 void update_nodestats_data(struct nodestats *stats)
 {
@@ -116,6 +160,146 @@ void after_write(uv_write_t *req,int status)
     fprintf(stderr, "uv_write error: %d %s\n",status,uv_err_name(status));
 }
 
+void process_udpentry(struct udp_entry *up)
+{
+    struct coin_info *cp = get_coin_info("BTCD");
+    char ipaddr[256],retjsonstr[4096];
+    uint16_t supernet_port;
+    supernet_port = extract_nameport(ipaddr,sizeof(ipaddr),(struct sockaddr_in *)&up->addr);
+    if ( notlocalip(ipaddr) == 0 )
+        strcpy(ipaddr,cp->myipaddr);
+    retjsonstr[0] = 0;
+    process_packet(up->internalflag,retjsonstr,up->buf,up->len,up->udp,&up->addr,ipaddr,supernet_port);
+    free(up->buf);
+    free(up);
+}
+
+void _on_udprecv(int32_t queueflag,int32_t internalflag,uv_udp_t *udp,ssize_t nread,const uv_buf_t *rcvbuf,const struct sockaddr *addr,unsigned flags)
+{
+    uint16_t supernet_port;
+    int32_t createdflag;
+    struct nodestats *stats;
+    struct pserver_info *pserver;
+    struct udp_entry *up;
+    struct coin_info *cp = get_coin_info("BTCD");
+    char ipaddr[256],retjsonstr[4096];
+    if ( cp != 0 && nread > 0 )
+    {
+        supernet_port = extract_nameport(ipaddr,sizeof(ipaddr),(struct sockaddr_in *)addr);
+        if ( notlocalip(ipaddr) == 0 )
+            strcpy(ipaddr,cp->myipaddr);
+        pserver = get_pserver(&createdflag,ipaddr,supernet_port,0);
+        pserver->lastcontact = (uint32_t)time(NULL);
+        if ( pserver->nxt64bits != 0 && (stats= get_nodestats(pserver->nxt64bits)) != 0 )
+        {
+            stats->numrecv++;
+            stats->recvmilli = milliseconds();
+        }
+        if ( Debuglevel > 0 || (nread > 400 && nread != MAX_UDPLEN) )
+            printf("UDP RECEIVED %ld from %s/%d crc.%x\n",nread,ipaddr,supernet_port,_crc32(0,rcvbuf->base,nread));
+        ASSERT(addr->sa_family == AF_INET);
+        server_xferred += nread;
+        if ( queueflag != 0 )
+        {
+            up = calloc(1,sizeof(*up));
+            up->udp = udp;
+            up->internalflag = internalflag;
+            up->buf = rcvbuf->base;
+            up->len = (int32_t)nread;
+            up->addr = *addr;
+            queue_enqueue(&UDP_Q,up);
+        }
+        else process_packet(internalflag,retjsonstr,(unsigned char *)rcvbuf->base,(int32_t)nread,udp,(struct sockaddr *)addr,ipaddr,supernet_port);
+    }
+    else if ( rcvbuf->base != 0 )
+        free(rcvbuf->base);
+}
+
+void on_udprecv(uv_udp_t *udp,ssize_t nread,const uv_buf_t *rcvbuf,const struct sockaddr *addr,unsigned flags)
+{
+    _on_udprecv(1,0,udp,nread,rcvbuf,addr,flags);
+}
+
+void on_bridgerecv(uv_udp_t *udp,ssize_t nread,const uv_buf_t *rcvbuf,const struct sockaddr *addr,unsigned flags)
+{
+    _on_udprecv(0,1,udp,nread,rcvbuf,addr,flags);
+}
+
+uv_udp_t *open_udp(uint16_t port,void (*handler)(uv_udp_t *,ssize_t,const uv_buf_t *,const struct sockaddr *,unsigned int))
+{
+    static uv_udp_t *fixed_udp;
+    int32_t r;
+    uv_udp_t *udp;
+    struct sockaddr_in addr;
+#ifdef __APPLE__
+    if ( fixed_udp != 0 )
+        return(fixed_udp);
+#endif
+    udp = malloc(sizeof(uv_udp_t));
+    r = uv_udp_init(UV_loop,udp);
+    if ( r != 0 )
+    {
+        fprintf(stderr, "uv_udp_init: %d %s\n",r,uv_err_name(r));
+        return(0);
+    }
+    /*uv_udp_init(loop, &recv_socket);
+    struct sockaddr_in recv_addr = uv_ip4_addr("0.0.0.0", 68);
+    uv_udp_bind(&recv_socket, recv_addr, 0);
+    uv_udp_recv_start(&recv_socket, alloc_buffer, on_read);
+    
+    uv_udp_init(loop, &send_socket);
+    uv_udp_bind(&send_socket, uv_ip4_addr("0.0.0.0", 0), 0);
+    uv_udp_set_broadcast(&send_socket, 1);*/
+    
+    
+    if ( port != 0 )
+    {
+        uv_ip4_addr("0.0.0.0",port,&addr);
+        r = uv_udp_bind(udp,(struct sockaddr *)&addr,0);
+        if ( r != 0 )
+        {
+            fprintf(stderr,"uv_udp_bind: %d %s\n",r,uv_err_name(r));
+            return(0);
+        }
+        r = uv_udp_recv_start(udp,portable_alloc,handler);
+        if ( r != 0 )
+        {
+            fprintf(stderr, "uv_udp_recv_start: %d %s\n",r,uv_err_name(r));
+            return(0);
+        }
+        r = uv_udp_set_broadcast(udp,1);
+        if ( r != 0 )
+        {
+            fprintf(stderr,"uv_udp_set_broadcast: %d %s\n",r,uv_err_name(r));
+            return(0);
+        }
+        fixed_udp = udp;
+    }
+    else
+    {
+        uv_ip4_addr("0.0.0.0",0,&addr);
+        r = uv_udp_bind(udp,(struct sockaddr *)&addr,0);
+        if ( r != 0 )
+        {
+            fprintf(stderr,"uv_udp_bind: %d %s\n",r,uv_err_name(r));
+            return(0);
+        }
+        r = uv_udp_recv_start(udp,portable_alloc,handler);
+        if ( r != 0 )
+        {
+            fprintf(stderr, "uv_udp_recv_start: %d %s\n",r,uv_err_name(r));
+            return(0);
+        }
+        r = uv_udp_set_broadcast(udp,1);
+        if ( r != 0 )
+        {
+            fprintf(stderr,"uv_udp_set_broadcast: %d %s\n",r,uv_err_name(r));
+            return(0);
+        }
+    }
+    return(udp);
+}
+
 int32_t process_sendQ_item(struct write_req_t *wr)
 {
     char ipaddr[64];
@@ -126,6 +310,11 @@ int32_t process_sendQ_item(struct write_req_t *wr)
     {
         supernet_port = extract_nameport(ipaddr,sizeof(ipaddr),(struct sockaddr_in *)&wr->addr);
         pserver = get_pserver(&createdflag,ipaddr,0,0);
+        if ( pserver->udps[wr->isbridge] == 0 )
+        {
+            if ( (pserver->udps[wr->isbridge]= open_udp(0,on_udprecv)) == 0 )
+                return(-1);
+        }
         if ( 1 && (pserver->nxt64bits == cp->privatebits || pserver->nxt64bits == cp->srvpubnxtbits) )
         {
             //printf("(%s/%d) no point to send yourself dest.%llu pub.%llu srvpub.%llu\n",ipaddr,supernet_port,(long long)pserver->nxt64bits,(long long)cp->pubnxtbits,(long long)cp->srvpubnxtbits);
@@ -143,108 +332,34 @@ int32_t process_sendQ_item(struct write_req_t *wr)
         if ( Debuglevel > 1 )
             printf("uv_udp_send %ld bytes to %s/%d crx.%x\n",wr->buf.len,ipaddr,supernet_port,_crc32(0,wr->buf.base,wr->buf.len));
     }
-    r = uv_udp_send(&wr->U.ureq,wr->udp,&wr->buf,1,&wr->addr,(uv_udp_send_cb)after_write);
+    r = uv_udp_send(&wr->U.ureq,pserver->udps[wr->isbridge],&wr->buf,1,&wr->addr,(uv_udp_send_cb)after_write);
     if ( r != 0 )
         printf("uv_udp_send error.%d %s wr.%p wreq.%p %p len.%ld\n",r,uv_err_name(r),wr,&wr->U.ureq,wr->buf.base,wr->buf.len);
     return(r);
 }
 
-int32_t portable_udpwrite(int32_t queueflag,const struct sockaddr *addr,uv_udp_t *handle,void *buf,long len,int32_t allocflag)
+int32_t portable_udpwrite(int32_t queueflag,const struct sockaddr *addr,int32_t isbridge,void *buf,long len,int32_t allocflag)
 {
     int32_t r=0;
     struct write_req_t *wr;
+    if ( IS_LIBTEST == 2 )
+        queueflag = 0;
     wr = alloc_wr(buf,len,allocflag);
     ASSERT(wr != NULL);
     wr->addr = *addr;
-    wr->udp = handle;
+    wr->isbridge = isbridge;
     if ( queueflag != 0 )
     {
-        wr->queuetime = (uint32_t)(1000. * milliseconds());
+        wr->queuetime = (uint32_t)(milliseconds() + (rand() % MAX_UDPQUEUE_MILLIS));
         queue_enqueue(&sendQ,wr);
     }
     else r = process_sendQ_item(wr);
     return(r);
 }
 
-void on_udprecv(uv_udp_t *udp,ssize_t nread,const uv_buf_t *rcvbuf,const struct sockaddr *addr,unsigned flags)
+void *start_libuv_udpserver(int32_t ip4_or_ip6,uint16_t port,void (*handler)(uv_udp_t *,ssize_t,const uv_buf_t *,const struct sockaddr *,unsigned int))
 {
-    uint16_t supernet_port;
-    int32_t createdflag;
-    struct nodestats *stats;
-    struct pserver_info *pserver;
-    struct NXT_acct *np;
-    struct coin_info *cp = get_coin_info("BTCD");
-    char ipaddr[256],retjsonstr[4096],srvNXTaddr[64];
-    retjsonstr[0] = 0;
-    if ( cp != 0 && nread > 0 )
-    {
-        supernet_port = extract_nameport(ipaddr,sizeof(ipaddr),(struct sockaddr_in *)addr);
-        if ( notlocalip(ipaddr) == 0 )
-            strcpy(ipaddr,cp->myipaddr);
-        pserver = get_pserver(&createdflag,ipaddr,supernet_port,0);
-        if ( (stats= get_nodestats(pserver->nxt64bits)) != 0 )
-        {
-            stats->numrecv++;
-            stats->recvmilli = milliseconds();
-        }
-        {
-            //int i;
-            //for (i=0; i<16; i++)
-            //    printf("%02x ",((unsigned char *)rcvbuf->base)[i]);
-            if ( Debuglevel > 0 || (nread > 400 && nread != MAX_UDPLEN) )
-                printf("UDP RECEIVED %ld from %s/%d crc.%x\n",nread,ipaddr,supernet_port,_crc32(0,rcvbuf->base,nread));
-        }
-        //expand_nxt64bits(NXTaddr,cp->pubnxtbits);
-        expand_nxt64bits(srvNXTaddr,cp->srvpubnxtbits);
-        np = process_packet(0,retjsonstr,(unsigned char *)rcvbuf->base,(int32_t)nread,udp,(struct sockaddr *)addr,ipaddr,supernet_port);
-        ASSERT(addr->sa_family == AF_INET);
-        server_xferred += nread;
-    }
-    if ( rcvbuf->base != 0 )
-    {
-        //printf("on_duprecv free.%p\n",rcvbuf->base);
-        free(rcvbuf->base);
-    }
-}
-
-uv_udp_t *open_udp(struct sockaddr *addr)
-{
-    int32_t r;
-    uv_udp_t *udp;
-    udp = malloc(sizeof(uv_udp_t));
-    r = uv_udp_init(UV_loop,udp);
-    if ( r != 0 )
-    {
-        fprintf(stderr, "uv_udp_init: %d %s\n",r,uv_err_name(r));
-        return(0);
-    }
-    if ( addr != 0 )
-    {
-        r = uv_udp_bind(udp,addr,0);
-        if ( r != 0 )
-        {
-            fprintf(stderr,"uv_udp_bind: %d %s\n",r,uv_err_name(r));
-            return(0);
-        }
-    }
-    r = uv_udp_set_broadcast(udp,1);
-    if ( r != 0 )
-    {
-        fprintf(stderr,"uv_udp_set_broadcast: %d %s\n",r,uv_err_name(r));
-        return(0);
-    }
-    r = uv_udp_recv_start(udp,portable_alloc,on_udprecv);
-    if ( r != 0 )
-    {
-        fprintf(stderr, "uv_udp_recv_start: %d %s\n",r,uv_err_name(r));
-        return(0);
-    }
-    return(udp);
-}
-
-void *start_libuv_udpserver(int32_t ip4_or_ip6,uint16_t port,void *handler)
-{
-    void *srv;
+    void *srv = 0;
     const struct sockaddr *ptr;
     struct sockaddr_in addr;
     struct sockaddr_in6 addr6;
@@ -259,9 +374,14 @@ void *start_libuv_udpserver(int32_t ip4_or_ip6,uint16_t port,void *handler)
         ptr = (const struct sockaddr *)&addr6;
     }
     else { printf("illegal ip4_or_ip6 %d\n",ip4_or_ip6); return(0); }
-    srv = open_udp((port > 0) ? (struct sockaddr *)ptr : 0);
+    srv = open_udp(port,handler);
     if ( srv != 0 )
-        printf("UDP.%p server started on port %d\n",srv,port);
+    {
+        char ipaddr[64];
+        uint16_t ip_port;
+        ip_port = extract_nameport(ipaddr,sizeof(ipaddr),(struct sockaddr_in *)ptr);
+        printf("UDP.%p server started on port %d <-> (%s:%d)\n",srv,port,ipaddr,ip_port);
+    }
     else printf("couldnt open_udp on port.%d\n",port);
     Servers_started |= 1;
 
@@ -301,10 +421,10 @@ int32_t is_encrypted_packet(unsigned char *tx,int32_t len)
     return(packet_crc == crc);
 }
 
-void send_packet(struct nodestats *peerstats,struct sockaddr *destaddr,unsigned char *finalbuf,int32_t len)
+void send_packet(int32_t queueflag,struct nodestats *peerstats,struct sockaddr *destaddr,unsigned char *finalbuf,int32_t len)
 {
     char ipaddr[64];
-    int32_t port,queueflag,p2pflag = 0;
+    int32_t port,p2pflag = 0;
     struct nodestats *stats;
     struct pserver_info *pserver = 0;
     if ( destaddr != 0 )
@@ -319,10 +439,9 @@ void send_packet(struct nodestats *peerstats,struct sockaddr *destaddr,unsigned 
                 port = SUPERNET_PORT;
                 uv_ip4_addr(ipaddr,port,(struct sockaddr_in *)destaddr);
             }
-            queueflag = 1;
-            if ( Debuglevel > 1 )
+            if ( Debuglevel > 2 )
                 printf("portable_udpwrite Q.%d %d to (%s:%d)\n",queueflag,len,ipaddr,port);
-            portable_udpwrite(queueflag,destaddr,Global_mp->udp,finalbuf,len,ALLOCWR_ALLOCFREE);
+            portable_udpwrite(queueflag,destaddr,0,finalbuf,len,ALLOCWR_ALLOCFREE);
         }
         else p2pflag = 1;
         if ( peerstats != 0 && peerstats->lastcontact < (time(NULL) - 600) )
@@ -359,7 +478,7 @@ void send_packet(struct nodestats *peerstats,struct sockaddr *destaddr,unsigned 
     }
 }
 
-void route_packet(int32_t encrypted,struct sockaddr *destaddr,char *hopNXTaddr,unsigned char *outbuf,int32_t len)
+void route_packet(int32_t queueflag,int32_t encrypted,struct sockaddr *destaddr,char *hopNXTaddr,unsigned char *outbuf,int32_t len)
 {
     unsigned char finalbuf[4096];
     char destip[64];
@@ -388,7 +507,7 @@ void route_packet(int32_t encrypted,struct sockaddr *destaddr,char *hopNXTaddr,u
         port = extract_nameport(destip,sizeof(destip),(struct sockaddr_in *)destaddr);
         if ( Debuglevel > 0 )
             printf("DIRECT send encrypted.%d to (%s/%d) finalbuf.%d\n",encrypted,destip,port,len);
-        send_packet(stats,destaddr,outbuf,len);
+        send_packet(queueflag,stats,destaddr,outbuf,len);
     }
     else if ( stats != 0 )
     {
@@ -398,13 +517,13 @@ void route_packet(int32_t encrypted,struct sockaddr *destaddr,char *hopNXTaddr,u
             if ( Debuglevel > 0 )
                 printf("DIRECT udpsend {%s} to %s/%d finalbuf.%d\n",hopNXTaddr,destip,stats->supernet_port,len);
             uv_ip4_addr(destip,stats->supernet_port!=0?stats->supernet_port:SUPERNET_PORT,&addr);
-            send_packet(stats,(struct sockaddr *)&addr,finalbuf,len);
+            send_packet(queueflag,stats,(struct sockaddr *)&addr,finalbuf,len);
         }
         else { printf("cant route packet.%d without IP address to %llu\n",len,(long long)stats->nxt64bits); return; }
     } else { printf("cant route packet.%d without nodestats\n",len); return; }
 }
 
-uint64_t directsend_packet(int32_t encrypted,struct pserver_info *pserver,char *origargstr,int32_t len,unsigned char *data,int32_t datalen)
+uint64_t directsend_packet(int32_t queueflag,int32_t encrypted,struct pserver_info *pserver,char *origargstr,int32_t len,unsigned char *data,int32_t datalen)
 {
     static unsigned char zeropubkey[crypto_box_PUBLICKEYBYTES];
     uint64_t txid = 0;
@@ -429,13 +548,13 @@ uint64_t directsend_packet(int32_t encrypted,struct pserver_info *pserver,char *
     txid = calc_txid((uint8_t *)origargstr,len);
     if ( encrypted != 0 && stats != 0 && memcmp(zeropubkey,stats->pubkey,sizeof(zeropubkey)) != 0 )
     {
-        char *sendmessage(char *hopNXTaddr,int32_t L,char *verifiedNXTaddr,char *msg,int32_t msglen,char *destNXTaddr,unsigned char *data,int32_t datalen);
+        char *sendmessage(int32_t queueflag,char *hopNXTaddr,int32_t L,char *verifiedNXTaddr,char *msg,int32_t msglen,char *destNXTaddr,unsigned char *data,int32_t datalen);
         char hopNXTaddr[64],destNXTaddr[64],*retstr;
         expand_nxt64bits(destNXTaddr,stats->nxt64bits);
         L = (encrypted>1 ? MAX(encrypted,Global_mp->Lfactor) : 0);
         if ( Debuglevel > 2 )
             fprintf(stderr,"direct send via sendmessage (%s) %p %d\n",origargstr,data,datalen);
-        retstr = sendmessage(hopNXTaddr,L,cp->srvNXTADDR,origargstr,len,destNXTaddr,data,datalen);
+        retstr = sendmessage(queueflag,hopNXTaddr,L,cp->srvNXTADDR,origargstr,len,destNXTaddr,data,datalen);
         if ( retstr != 0 )
         {
             if ( Debuglevel > 2 )
@@ -460,7 +579,7 @@ uint64_t directsend_packet(int32_t encrypted,struct pserver_info *pserver,char *
         {
             if ( Debuglevel > 0 )
                 fprintf(stderr,"route_packet encrypted.%d\n",encrypted);
-            route_packet(encrypted,&destaddr,0,outbuf,len);
+            route_packet(queueflag,encrypted,&destaddr,0,outbuf,len);
             //printf("got route_packet txid.%llu\n",(long long)txid);
         }
         else printf("directsend_packet: illegal len.%d\n",len);
@@ -496,7 +615,7 @@ uint64_t p2p_publishpacket(struct pserver_info *pserver,char *cmd)
     return(0);
 }
 
-struct transfer_args *create_transfer_args(char *previpaddr,char *sender,char *dest,char *name,uint32_t totallen,uint32_t blocksize,uint32_t totalcrc)
+struct transfer_args *create_transfer_args(char *previpaddr,char *sender,char *dest,char *name,uint32_t totallen,uint32_t blocksize,uint32_t totalcrc,char *handler)
 {
     uint64_t txid;
     char hashstr[4096];
@@ -513,6 +632,7 @@ struct transfer_args *create_transfer_args(char *previpaddr,char *sender,char *d
         safecopy(args->sender,sender,sizeof(args->sender));
         safecopy(args->dest,dest,sizeof(args->dest));
         safecopy(args->name,name,sizeof(args->name));
+        safecopy(args->handler,handler,sizeof(args->handler));
         args->totallen = totallen;
         args->blocksize = blocksize;
         args->totalcrc = totalcrc;
@@ -524,8 +644,8 @@ struct transfer_args *create_transfer_args(char *previpaddr,char *sender,char *d
         args->timestamps = calloc(args->numblocks,sizeof(*args->timestamps));
     if ( args->crcs == 0 )
         args->crcs = calloc(args->numblocks,sizeof(*args->crcs));
-    if ( args->ackcrcs == 0 )
-        args->ackcrcs = calloc(args->numblocks,sizeof(*args->ackcrcs));
+    if ( args->gotcrcs == 0 )
+        args->gotcrcs = calloc(args->numblocks,sizeof(*args->gotcrcs));
     if ( args->data == 0 )
         args->data = calloc(1,totallen);
     return(args);
@@ -538,10 +658,10 @@ int32_t update_transfer_args(struct transfer_args *args,uint32_t fragi,uint32_t 
     if ( data == 0 ) // sender
     {
         if ( fragi < args->numblocks )
-            args->ackcrcs[fragi] = datacrc;
+            args->gotcrcs[fragi] = datacrc;
         for (i=0; i<args->numblocks; i++)
         {
-            if ( args->crcs[i] == args->ackcrcs[i] )
+            if ( args->crcs[i] == args->gotcrcs[i] )
                 count++;
         }
         if ( Debuglevel > 2 )
@@ -573,15 +693,15 @@ void purge_transfer_args(struct transfer_args *args)
         free(args->data), args->data = 0;
     if ( args->crcs != 0 )
         free(args->crcs), args->crcs = 0;
-    if ( args->ackcrcs != 0 )
-        free(args->ackcrcs), args->ackcrcs = 0;
+    if ( args->gotcrcs != 0 )
+        free(args->gotcrcs), args->gotcrcs = 0;
     if ( args->timestamps != 0 )
         free(args->timestamps), args->timestamps = 0;
 }
 
-char *sendfrag(char *previpaddr,char *sender,char *verifiedNXTaddr,char *NXTACCTSECRET,char *dest,char *name,uint32_t fragi,uint32_t numfrags,uint32_t totallen,uint32_t blocksize,uint32_t totalcrc,uint32_t checkcrc,char *datastr)
+char *sendfrag(char *previpaddr,char *sender,char *verifiedNXTaddr,char *NXTACCTSECRET,char *dest,char *name,uint32_t fragi,uint32_t numfrags,uint32_t totallen,uint32_t blocksize,uint32_t totalcrc,uint32_t checkcrc,char *datastr,char *handler)
 {
-    char cmdstr[4096],_tokbuf[4096];
+    char cmdstr[4096],_tokbuf[4096],*cmd;
     struct pserver_info *pserver;
     struct transfer_args *args;
     struct coin_info *cp = get_coin_info("BTCD");
@@ -598,46 +718,42 @@ char *sendfrag(char *previpaddr,char *sender,char *verifiedNXTaddr,char *NXTACCT
     data = malloc(datalen);
     datalen = decode_hex(data,datalen,datastr);
     datacrc = _crc32(0,data,datalen);
-    sprintf(cmdstr,"{\"NXT\":\"%s\",\"pubkey\":\"%s\",\"ipaddr\":\"%s\",\"name\":\"%s\",\"time\":%ld,\"fragi\":%u,\"numfrags\":%u,\"totallen\":%u,\"blocksize\":%u,\"totalcrc\":%u,\"datacrc\":%u",verifiedNXTaddr,Global_mp->pubkeystr,cp->myipaddr,name,(long)time(NULL),fragi,numfrags,totallen,blocksize,totalcrc,datacrc);
+    sprintf(cmdstr,"{\"NXT\":\"%s\",\"pubkey\":\"%s\",\"ipaddr\":\"%s\",\"name\":\"%s\",\"time\":%ld,\"fragi\":%u,\"numfrags\":%u,\"totallen\":%u,\"blocksize\":%u,\"totalcrc\":%u,\"datacrc\":%u,\"handler\":\"%s\"",verifiedNXTaddr,Global_mp->pubkeystr,cp->myipaddr,name,(long)time(NULL),fragi,numfrags,totallen,blocksize,totalcrc,datacrc,handler);
     if ( previpaddr == 0 || previpaddr[0] == 0 )
     {
+        cmd = "sendfrag";
         pserver = get_pserver(0,dest,0,0);
-        sprintf(cmdstr+strlen(cmdstr),",\"requestType\":\"sendfrag\",\"data\":%d}",datalen);
+        sprintf(cmdstr+strlen(cmdstr),",\"requestType\":\"%s\",\"data\":%d}",cmd,datalen);
     }
     else
     {
+        cmd = "gotfrag";
         pserver = get_pserver(0,previpaddr,0,0);
         if ( checkcrc != datacrc )
             strcat(cmdstr,",\"error\":\"crcerror\"");
         else
         {
-            args = create_transfer_args(previpaddr,sender,dest,name,totallen,blocksize,totalcrc);
-            memcpy(args->data + fragi*args->blocksize,data,datalen);
-            if ( (count= update_transfer_args(args,fragi,numfrags,totalcrc,datacrc,data,datalen)) == args->numblocks )
+            args = create_transfer_args(previpaddr,sender,dest,name,totallen,blocksize,totalcrc,handler);
+            if ( args->gotcrcs[fragi] != args->crcs[fragi] )
             {
-                checkcrc = _crc32(0,args->data,args->totallen);
-                printf("completed.%d (%s) totallen.%d to (%s) checkcrc.%u vs totalcrc.%u\n",count,args->name,args->totallen,dest,checkcrc,totalcrc);
-                if ( checkcrc == args->totalcrc )
+                memcpy(args->data + fragi*args->blocksize,data,datalen);
+                if ( (count= update_transfer_args(args,fragi,numfrags,totalcrc,datacrc,data,datalen)) == args->numblocks )
                 {
-                    FILE *fp;
-                    char buf[512];
-                    sprintf(buf,"archive/%s",args->name);
-                    if ( (fp= fopen(buf,"wb")) != 0 )
-                    {
-                        fwrite(args->data,1,args->totallen,fp);
-                        fclose(fp);
-                    }
+                    checkcrc = _crc32(0,args->data,args->totallen);
+                    printf("completed.%d (%s) totallen.%d to (%s) checkcrc.%u vs totalcrc.%u\n",count,args->name,args->totallen,dest,checkcrc,totalcrc);
+                    if ( checkcrc == args->totalcrc )
+                        handler_gotfile(args);
+                    args->completed = 1;
+                    //purge_transfer_args(args);
                 }
-                args->completed = 1;
-                purge_transfer_args(args);
             }
-        }
+        } args = 0;
         free(data);
         data = 0;
-        sprintf(cmdstr+strlen(cmdstr),",\"requestType\":\"gotfrag\",\"count\":\"%d\",\"checkcrc\":%u}",count,checkcrc);
+        sprintf(cmdstr+strlen(cmdstr),",\"requestType\":\"%s\",\"count\":\"%d\",\"checkcrc\":%u,\"ptr\":\"%p\"}",cmd,count,checkcrc,args);
     }
     len = construct_tokenized_req(_tokbuf,cmdstr,NXTACCTSECRET);
-    txid = directsend_packet(1,pserver,_tokbuf,len,data,datalen);
+    txid = directsend_packet(!prevent_queueing(cmd),1,pserver,_tokbuf,len,data,datalen);
     if ( Debuglevel > 2 )
         printf("send back (%s) len.%d datalen.%d\n",cmdstr,len,datalen);
     if ( data != 0 )
@@ -650,24 +766,24 @@ int32_t Do_transfers(void *_args,int32_t argsize)
     struct transfer_args *args = *(struct transfer_args **)_args;
     char datastr[4096],*retstr;
     struct coin_info *cp = get_coin_info("BTCD");
-    int32_t i,remains,num,retval = -1,finished = 0;
+    int32_t i,remains,missing,num,finished,retval = -1;
     uint32_t now = (uint32_t)time(NULL);
-    //printf("Do_transfers.args.%p\n",args);
+    printf("Do_transfers.args.%p\n",args);
     if ( cp != 0 )
     {
-        retval = 0;
-        num = 0;
+        retval = missing = 0;
+        num = finished = 0;
         remains = args->totallen;
         for (i=0; i<args->numblocks; i++)
         {
-            if ( Debuglevel > 1 )
-                printf("crc.(%u vs %u) ",args->ackcrcs[i],args->crcs[i]);
-            if ( args->ackcrcs[i] != args->crcs[i] )
+            //if ( Debuglevel > 1 )
+           //     printf("crc[%d].(%u vs %u).%d ",i,args->gotcrcs[i],args->crcs[i],args->gotcrcs[i] != args->crcs[i]);
+            if ( args->gotcrcs[i] != args->crcs[i] )
             {
-                if ( (now - args->timestamps[i]) > 1 )
+                if ( (missing++ % 16) == 0 && (now - args->timestamps[i]) > 3 )
                 {
                     init_hexbytes_noT(datastr,args->data + i*args->blocksize,(remains < args->blocksize) ? remains : args->blocksize);
-                    retstr = sendfrag(0,cp->srvNXTADDR,cp->srvNXTADDR,cp->srvNXTACCTSECRET,args->dest,args->name,i,args->numblocks,args->totallen,args->blocksize,args->totalcrc,args->crcs[i],datastr);
+                    retstr = sendfrag(0,cp->srvNXTADDR,cp->srvNXTADDR,cp->srvNXTACCTSECRET,args->dest,args->name,i,args->numblocks,args->totallen,args->blocksize,args->totalcrc,args->crcs[i],datastr,args->handler);
                     num++;
                     if ( retstr != 0 )
                         free(retstr);
@@ -675,43 +791,57 @@ int32_t Do_transfers(void *_args,int32_t argsize)
                 }
             } else finished++;
             remains -= args->blocksize;
-            //if ( num > 16 )
-                break;
         }
         if ( finished == args->numblocks )
             retval = -1;
         if ( Debuglevel > 1 )
-            printf("finished %d of %d len.%d | %s %u to %s\n",finished,args->numblocks,args->totallen,args->name,args->totalcrc,args->dest);
+            printf("numsent.%d finished %d of %d len.%d | %s %u to %s\n",num,finished,args->numblocks,args->totallen,args->name,args->totalcrc,args->dest);
     }
     if ( args->timeout != 0 && now > args->timeout )
     {
         printf("TIMEOUT %u for %s %u len.%d to %s\n",args->timeout,args->name,args->totalcrc,args->totallen,args->dest);
-        args->completed = 1;
         retval = -1;
     }
     if ( retval < 0 )
     {
         args->completed = 1;
-        purge_transfer_args(args);
+        //purge_transfer_args(args);
     }
     return(retval);
 }
 
-char *gotfrag(char *previpaddr,char *sender,char *NXTaddr,char *NXTACCTSECRET,char *src,char *name,uint32_t fragi,uint32_t numfrags,uint32_t totallen,uint32_t blocksize,uint32_t totalcrc,uint32_t datacrc,int32_t count)
+char *gotfrag(char *previpaddr,char *sender,char *NXTaddr,char *NXTACCTSECRET,char *src,char *name,uint32_t fragi,uint32_t numfrags,uint32_t totallen,uint32_t blocksize,uint32_t totalcrc,uint32_t datacrc,int32_t count,char *handler)
 {
+    int32_t i,len;
     struct transfer_args *args;
-    char cmdstr[4096];
+    char cmdstr[MAX_JSON_FIELD*2],datastr[MAX_JSON_FIELD*2];
     if ( blocksize == 0 )
         blocksize = 512;
     if ( totallen == 0 )
         totallen = numfrags * blocksize;
-    sprintf(cmdstr,"{\"requestType\":\"gotfrag\",\"sender\":\"%s\",\"src\":\"%s\",\"fragi\":%u,\"numfrags\":%u,\"totallen\":%u,\"blocksize\":%u,\"totalcrc\":%u,\"datacrc\":%u,\"count\":%d}",sender,src,fragi,numfrags,totallen,blocksize,totalcrc,datacrc,count);
-    args = create_transfer_args(previpaddr,NXTaddr,src,name,totallen,blocksize,totalcrc);
+    sprintf(cmdstr,"{\"requestType\":\"gotfrag\",\"sender\":\"%s\",\"ipaddr\":\"%s\",\"fragi\":%u,\"numfrags\":%u,\"totallen\":%u,\"blocksize\":%u,\"totalcrc\":%u,\"datacrc\":%u,\"count\":%d,\"handler\":\"%s\"}",sender,src,fragi,numfrags,totallen,blocksize,totalcrc,datacrc,count,handler);
+    printf("GOTFRAG.(%s)\n",cmdstr);
+    args = create_transfer_args(previpaddr,NXTaddr,src,name,totallen,blocksize,totalcrc,handler);
     update_transfer_args(args,fragi,numfrags,totalcrc,datacrc,0,0);
+    if ( args->blocksize == blocksize && args->totallen == totallen && args->numblocks == numfrags )
+    {
+        for (i=1; i<numfrags; i++)
+        {
+            fragi = (fragi + i) % numfrags;
+            if ( args->crcs[fragi] != args->gotcrcs[fragi] )
+            {
+                if ( fragi != (numfrags-1) )
+                    len = blocksize;
+                else len = (totallen - (blocksize * (numfrags-1)));
+                init_hexbytes_noT(datastr,args->data + fragi*blocksize,len);
+                return(sendfrag(0,NXTaddr,NXTaddr,NXTACCTSECRET,previpaddr,name,(fragi+1) % numfrags,numfrags,totallen,blocksize,totalcrc,args->crcs[fragi+1],datastr,"mgw"));
+            }
+        }
+    }
     return(clonestr(cmdstr));
 }
 
-char *start_transfer(char *previpaddr,char *sender,char *verifiedNXTaddr,char *NXTACCTSECRET,char *dest,char *name,uint8_t *data,int32_t totallen,int32_t timeout)
+char *start_transfer(char *previpaddr,char *sender,char *verifiedNXTaddr,char *NXTACCTSECRET,char *dest,char *name,uint8_t *data,int32_t totallen,int32_t timeout,char *handler)
 {
     static char *buf;
     static int64_t allocsize=0;
@@ -723,10 +853,11 @@ char *start_transfer(char *previpaddr,char *sender,char *verifiedNXTaddr,char *N
         data = (uint8_t *)load_file(name,&buf,&len,&allocsize);
         totallen = (int32_t)len;
     }
+    printf("start transfer %p len.%d\n",data,totallen);
     if ( data != 0 && totallen != 0 )
     {
         totalcrc = _crc32(0,data,totallen);
-        args = create_transfer_args(previpaddr,verifiedNXTaddr,dest,name,totallen,blocksize,totalcrc);
+        args = create_transfer_args(previpaddr,verifiedNXTaddr,dest,name,totallen,blocksize,totalcrc,handler);
         if ( timeout != 0 )
             args->timeout = (uint32_t)time(NULL) + timeout;
         printf("start_transfer.args.%p (%s) timeout.%u\n",args,verifiedNXTaddr,args->timeout);
@@ -736,10 +867,10 @@ char *start_transfer(char *previpaddr,char *sender,char *verifiedNXTaddr,char *N
         for (i=0; i<args->numblocks; i++)
         {
             args->crcs[i] = _crc32(0,data + i*blocksize,(remains < blocksize) ? remains : blocksize);
-            printf("CRC[%d] <- %u offset %d len.%d\n",i,args->crcs[i],i*blocksize,(remains < blocksize) ? remains : blocksize);
+            //printf("CRC[%d] <- %u offset %d len.%d\n",i,args->crcs[i],i*blocksize,(remains < blocksize) ? remains : blocksize);
             remains -= blocksize;
         }
-        start_task(Do_transfers,"transfer",100000,(void *)&args,sizeof(args));
+        start_task(Do_transfers,"transfer",10000000,(void *)&args,sizeof(args));
         return(clonestr("{\"result\":\"start_transfer pending\"}"));
     } else return(clonestr("{\"error\":\"start_transfer: cant start_transfer\"}"));
 }

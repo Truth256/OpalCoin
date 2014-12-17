@@ -498,6 +498,8 @@ struct coin_info *init_coin_info(cJSON *json,char *coinstr)
                     if ( Global_mp->Lfactor > MAX_LFACTOR )
                         Global_mp->Lfactor = MAX_LFACTOR;
                     cp->srvport = get_API_int(cJSON_GetObjectItem(json,"srvport"),SUPERNET_PORT);
+                    cp->bridgeport = get_API_int(cJSON_GetObjectItem(json,"bridgeport"),0);
+                    extract_cJSON_str(cp->bridgeipaddr,sizeof(cp->bridgeipaddr),json,"bridgeipaddr");
                 }
                 if ( extract_cJSON_str(tradebotfname,sizeof(tradebotfname),json,"tradebotfname") > 0 )
                     cp->tradebotfname = clonestr(tradebotfname);
@@ -670,6 +672,7 @@ char *init_MGWconf(char *JSON_or_fname,char *myipaddr)
             extract_cJSON_str(NXTISSUERACCT,sizeof(NXTISSUERACCT),MGWconf,"NXTISSUERACCT");
             IS_LIBTEST = get_API_int(cJSON_GetObjectItem(MGWconf,"LIBTEST"),1);
             SERVER_PORT = get_API_int(cJSON_GetObjectItem(MGWconf,"SERVER_PORT"),3000);
+            SUPERNET_PORT = get_API_int(cJSON_GetObjectItem(MGWconf,"SUPERNET_PORT"),_SUPERNET_PORT);
             APIPORT = get_API_int(cJSON_GetObjectItem(MGWconf,"APIPORT"),SUPERNET_PORT);
             APISLEEP = get_API_int(cJSON_GetObjectItem(MGWconf,"APISLEEP"),3);
             USESSL = get_API_int(cJSON_GetObjectItem(MGWconf,"USESSL"),0);

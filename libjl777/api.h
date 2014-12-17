@@ -35,7 +35,7 @@ struct per_session_data__http
 int32_t is_BTCD_command(cJSON *json)
 {
     // RPC.({"requestType":"BTCDjson","json":"{\"requestType\":\"telepodacct\"}"}) wsi.0x7f3650035cc0 user.0x7f3650037920
-    char *BTCDcmds[] = { "maketelepods", "teleport", "telepodacct" };
+    char *BTCDcmds[] = { "maketelepods", "teleport", "telepodacct", "MGWdeposits", "startxfer" };
     char request[MAX_JSON_FIELD],jsonstr[MAX_JSON_FIELD];
     long i,iter;
     cJSON *json2 = 0;
@@ -636,7 +636,7 @@ char *sendmsg_func(char *NXTaddr,char *NXTACCTSECRET,char *previpaddr,char *send
             len = (int32_t)strlen(origargstr)+1;
             stripwhite_ns(origargstr,len);
             len = (int32_t)strlen(origargstr)+1;
-            retstr = sendmessage(nexthopNXTaddr,L,sender,origargstr,len,destNXTaddr,0,0);
+            retstr = sendmessage(!prevent_queueing("sendmsg"),nexthopNXTaddr,L,sender,origargstr,len,destNXTaddr,0,0);
         }
     }
     //if ( retstr == 0 )
@@ -668,7 +668,7 @@ char *sendbinary_func(char *NXTaddr,char *NXTACCTSECRET,char *previpaddr,char *s
         else
         {
             sprintf(cmdstr,"{\"requestType\":\"sendbinary\",\"NXT\":\"%s\",\"data\":\"%s\",\"dest\":\"%s\"}",NXTaddr,datastr,destNXTaddr);
-            retstr = send_tokenized_cmd(nexthopNXTaddr,L,NXTaddr,NXTACCTSECRET,cmdstr,destNXTaddr);
+            retstr = send_tokenized_cmd(!prevent_queueing("sendbinary"),nexthopNXTaddr,L,NXTaddr,NXTACCTSECRET,cmdstr,destNXTaddr);
         }
     }
     //if ( retstr == 0 )
@@ -999,7 +999,7 @@ char *passthru_func(char *NXTaddr,char *NXTACCTSECRET,char *previpaddr,char *sen
         sprintf(cmdstr,"{\"requestType\":\"remote\",\"coin\":\"%s\",\"method\":\"%s\",\"tag\":\"%s\",\"result\":\"%s\"}",coinstr,method,tagstr,str2);
         free(str2);
         hopNXTaddr[0] = 0;
-        retstr = send_tokenized_cmd(hopNXTaddr,0,NXTaddr,NXTACCTSECRET,cmdstr,sender);
+        retstr = send_tokenized_cmd(!prevent_queueing("passthru"),hopNXTaddr,0,NXTaddr,NXTACCTSECRET,cmdstr,sender);
         free(cmdstr);
     }
     return(retstr);
@@ -1437,42 +1437,58 @@ char *settings_func(char *NXTaddr,char *NXTACCTSECRET,char *previpaddr,char *sen
     return(retstr);
 }
 
+char *bridge_test(int32_t actionflag,char *NXTACCTSECRET,char *destip,char *origargstr)
+{
+    struct coin_info *cp = get_coin_info("BTCD");
+    uint16_t bridgeport = 0;
+    if ( strcmp(cp->myipaddr,destip) == 0 )
+    {
+        if ( (bridgeport= cp->bridgeport) == 0 && cp->bridgeipaddr[0] != 0 )
+            destip[0] = 0;
+        else strcpy(destip,cp->bridgeipaddr);
+    }
+    if ( destip[0] != 0 )
+    {
+        if ( is_illegal_ipaddr(destip) == 0 )
+        {
+            if ( actionflag != 0 )
+                send_to_ipaddr(bridgeport,0,destip,origargstr,NXTACCTSECRET);
+            if ( bridgeport != 0 )
+                return(clonestr("{\"result\":\"bridged\"}"));
+            else return(clonestr("{\"result\":\"forwarded\"}"));
+        } else return(clonestr("{\"error\":\"illegal destip\"}"));
+    }
+    return(0);
+}
+
 char *genmultisig_func(char *NXTaddr,char *NXTACCTSECRET,char *previpaddr,char *sender,int32_t valid,cJSON **objs,int32_t numobjs,char *origargstr)
 {
     char refacct[MAX_JSON_FIELD],coin[MAX_JSON_FIELD],destip[MAX_JSON_FIELD],*retstr = 0;
-    int32_t i,M,N,n = 0;
-    struct coin_info *cp = get_coin_info("BTCD");
+    int32_t M,N,n = 0;
+    struct multisig_addr *msig;
     struct contact_info **contacts = 0;
     copy_cJSON(coin,objs[0]);
     copy_cJSON(refacct,objs[1]);
     M = (int32_t)get_API_int(objs[2],1);
     N = (int32_t)get_API_int(objs[3],1);
+    contacts = conv_contacts_json(&n,objs[4]);
     copy_cJSON(destip,objs[5]);
-    if ( strcmp(cp->myipaddr,destip) == 0 )
-        destip[0] = 0;
-    if ( destip[0] != 0 )
-    {
-        printf("dest.%s myip.%s\n",cp->myipaddr,destip);
-        if ( is_illegal_ipaddr(destip) == 0 )
-        {
-            send_to_ipaddr(0,destip,origargstr,NXTACCTSECRET);
-            return(clonestr("{\"result\":\"genmultisig forwarded\"}"));
-        } else return(clonestr("{\"error\":\"genmultisig_func illegal destip\"}"));
-    }
-    //if ( is_remote_access(previpaddr) != 0 && (cp == 0 || strcmp(cp->myipaddr,destip) != 0) )
-    //    return(0);
     if ( coin[0] != 0 && refacct[0] != 0 && sender[0] != 0 && valid > 0 )
     {
-        contacts = conv_contacts_json(&n,objs[4]);
+        if ( is_remote_access(previpaddr) != 0 && (retstr= bridge_test(0,NXTACCTSECRET,destip,origargstr)) != 0 )
+        {
+            free(retstr);
+            if ( (msig= find_NXT_msig(coin,sender,contacts,n)) != 0 )
+            {
+                retstr = create_multisig_json(msig,0);
+                free(msig);
+                return(retstr);
+            }
+            return(bridge_test(1,NXTACCTSECRET,destip,origargstr));
+        }
         retstr = genmultisig(NXTaddr,NXTACCTSECRET,previpaddr,coin,refacct,M,N,contacts,n);
     }
-    if ( contacts != 0 )
-    {
-        for (i=0; i<n; i++)
-            if ( contacts[i] != 0 )
-                free(contacts[i]);
-        free(contacts);
-    }
+    free_contacts(contacts,n);
     if ( retstr != 0 )
         return(retstr);
     return(clonestr("{\"error\":\"bad genmultisig_func paramater\"}"));
@@ -1498,7 +1514,7 @@ char *getmsigpubkey_func(char *NXTaddr,char *NXTACCTSECRET,char *previpaddr,char
             if ( get_acct_coinaddr(acctcoinaddr,cp,refNXTaddr) != 0 && get_bitcoind_pubkey(pubkey,cp,acctcoinaddr) != 0 )
             {
                 sprintf(cmdstr,"{\"requestType\":\"setmsigpubkey\",\"NXT\":\"%s\",\"coin\":\"%s\",\"refNXTaddr\":\"%s\",\"addr\":\"%s\",\"pubkey\":\"%s\"}",NXTaddr,coin,refNXTaddr,acctcoinaddr,pubkey);
-                return(send_tokenized_cmd(hopNXTaddr,0,NXTaddr,NXTACCTSECRET,cmdstr,sender));
+                return(send_tokenized_cmd(!prevent_queueing("setmsigpubkey"),hopNXTaddr,0,NXTaddr,NXTACCTSECRET,cmdstr,sender));
             }
         }
     }
@@ -1544,10 +1560,16 @@ char *MGWaddr_func(char *NXTaddr,char *NXTACCTSECRET,char *previpaddr,char *send
 
 char *MGWdeposits_func(char *NXTaddr,char *NXTACCTSECRET,char *previpaddr,char *sender,int32_t valid,cJSON **objs,int32_t numobjs,char *origargstr)
 {
-    char coin[MAX_JSON_FIELD],asset[MAX_JSON_FIELD],NXT0[MAX_JSON_FIELD],NXT1[MAX_JSON_FIELD],NXT2[MAX_JSON_FIELD],ip0[MAX_JSON_FIELD],ip1[MAX_JSON_FIELD],ip2[MAX_JSON_FIELD],specialNXT[MAX_JSON_FIELD],exclude0[MAX_JSON_FIELD],exclude1[MAX_JSON_FIELD];
+    char coin[MAX_JSON_FIELD],asset[MAX_JSON_FIELD],NXT0[MAX_JSON_FIELD],NXT1[MAX_JSON_FIELD],NXT2[MAX_JSON_FIELD],ip0[MAX_JSON_FIELD],ip1[MAX_JSON_FIELD],ip2[MAX_JSON_FIELD],specialNXT[MAX_JSON_FIELD],exclude0[MAX_JSON_FIELD],exclude1[MAX_JSON_FIELD],exclude2[MAX_JSON_FIELD],destip[MAX_JSON_FIELD];
     int32_t rescan,actionflag;
+    char *retstr;
+    copy_cJSON(destip,objs[14]);
     if ( is_remote_access(previpaddr) != 0 )
-        return(0);
+    {
+        if ( (retstr= bridge_test(1,NXTACCTSECRET,destip,origargstr)) != 0 )
+            return(retstr);
+       else return(0);
+    }
     copy_cJSON(NXT0,objs[0]);
     copy_cJSON(NXT1,objs[1]);
     copy_cJSON(NXT2,objs[2]);
@@ -1561,14 +1583,15 @@ char *MGWdeposits_func(char *NXTaddr,char *NXTACCTSECRET,char *previpaddr,char *
     copy_cJSON(specialNXT,objs[10]);
     copy_cJSON(exclude0,objs[11]);
     copy_cJSON(exclude1,objs[12]);
+    copy_cJSON(exclude2,objs[13]);
     if ( ((NXT0[0] != 0 && NXT1[0] != 0 && NXT2[0] != 0) || (ip0[0] != 0 && ip1[0] != 0 && ip2[0] != 0)) && sender[0] != 0 && valid > 0 )
-        return(MGWdeposits(specialNXT,rescan,actionflag,coin,asset,NXT0,NXT1,NXT2,ip0,ip1,ip2,exclude0,exclude1));
+        return(MGWdeposits(specialNXT,rescan,actionflag,coin,asset,NXT0,NXT1,NXT2,ip0,ip1,ip2,exclude0,exclude1,exclude2));
     return(clonestr("{\"error\":\"bad MGWdeposits_func paramater\"}"));
 }
 
 char *sendfrag_func(char *NXTaddr,char *NXTACCTSECRET,char *previpaddr,char *sender,int32_t valid,cJSON **objs,int32_t numobjs,char *origargstr)
 {
-    char name[MAX_JSON_FIELD],dest[MAX_JSON_FIELD],datastr[MAX_JSON_FIELD];
+    char name[MAX_JSON_FIELD],dest[MAX_JSON_FIELD],datastr[MAX_JSON_FIELD],handler[MAX_JSON_FIELD];
     uint32_t fragi,numfrags,totalcrc,datacrc,totallen,blocksize;
     printf("sendfrag_func(%s)\n",origargstr);
     copy_cJSON(name,objs[1]);
@@ -1580,15 +1603,16 @@ char *sendfrag_func(char *NXTaddr,char *NXTACCTSECRET,char *previpaddr,char *sen
     copy_cJSON(datastr,objs[7]);
     totallen = (uint32_t)get_API_int(objs[8],0);
     blocksize = (uint32_t)get_API_int(objs[9],0);
+    copy_cJSON(handler,objs[10]);
     if ( name[0] != 0 && dest[0] != 0 && sender[0] != 0 && valid > 0 )
-        return(sendfrag(previpaddr,sender,NXTaddr,NXTACCTSECRET,dest,name,fragi,numfrags,totallen,blocksize,totalcrc,datacrc,datastr));
+        return(sendfrag(previpaddr,sender,NXTaddr,NXTACCTSECRET,dest,name,fragi,numfrags,totallen,blocksize,totalcrc,datacrc,datastr,handler));
     else printf("error sendfrag: name.(%s) dest.(%s) valid.%d sender.(%s) fragi.%d num.%d crc %u %u\n",name,dest,valid,sender,fragi,numfrags,totalcrc,datacrc);
     return(clonestr("{\"error\":\"bad sendfrag_func paramater\"}"));
 }
 
 char *gotfrag_func(char *NXTaddr,char *NXTACCTSECRET,char *previpaddr,char *sender,int32_t valid,cJSON **objs,int32_t numobjs,char *origargstr)
 {
-    char name[MAX_JSON_FIELD],src[MAX_JSON_FIELD];
+    char name[MAX_JSON_FIELD],src[MAX_JSON_FIELD],handler[MAX_JSON_FIELD];
     uint32_t fragi,numfrags,totalcrc,datacrc,totallen,blocksize,count;
     printf("gotfrag_func(%s) is remote.%d\n",origargstr,is_remote_access(previpaddr));
     if ( is_remote_access(previpaddr) == 0 )
@@ -1602,14 +1626,15 @@ char *gotfrag_func(char *NXTaddr,char *NXTACCTSECRET,char *previpaddr,char *send
     totallen = (uint32_t)get_API_int(objs[7],0);
     blocksize = (uint32_t)get_API_int(objs[8],0);
     count = (uint32_t)get_API_int(objs[9],0);
+    copy_cJSON(handler,objs[10]);
     if ( name[0] != 0 && src[0] != 0 && sender[0] != 0 && valid > 0 )
-        gotfrag(previpaddr,sender,NXTaddr,NXTACCTSECRET,src,name,fragi,numfrags,totallen,blocksize,totalcrc,datacrc,count);
+        gotfrag(previpaddr,sender,NXTaddr,NXTACCTSECRET,src,name,fragi,numfrags,totallen,blocksize,totalcrc,datacrc,count,handler);
     return(clonestr(origargstr));
 }
 
 char *startxfer_func(char *NXTaddr,char *NXTACCTSECRET,char *previpaddr,char *sender,int32_t valid,cJSON **objs,int32_t numobjs,char *origargstr)
 {
-    char fname[MAX_JSON_FIELD],dest[MAX_JSON_FIELD],datastr[MAX_JSON_FIELD];
+    char fname[MAX_JSON_FIELD],dest[MAX_JSON_FIELD],datastr[MAX_JSON_FIELD],handler[MAX_JSON_FIELD];
     int32_t timeout,datalen = 0;
     uint8_t *data = 0;
     if ( is_remote_access(previpaddr) != 0 )
@@ -1618,6 +1643,7 @@ char *startxfer_func(char *NXTaddr,char *NXTACCTSECRET,char *previpaddr,char *se
     copy_cJSON(dest,objs[1]);
     copy_cJSON(datastr,objs[2]);
     timeout = (int32_t)get_API_int(objs[3],0);
+    copy_cJSON(handler,objs[4]);
     printf("startxfer_func(%s) is remote.%d fname(%s) timeout.%d\n",origargstr,is_remote_access(previpaddr),fname,timeout);
     if ( (fname[0] != 0 || datastr[0] != 0) && dest[0] != 0 && sender[0] != 0 && valid > 0 )
     {
@@ -1627,7 +1653,7 @@ char *startxfer_func(char *NXTaddr,char *NXTACCTSECRET,char *previpaddr,char *se
             data = malloc(datalen);
             decode_hex(data,datalen,datastr);
         }
-        return(start_transfer(previpaddr,sender,NXTaddr,NXTACCTSECRET,dest,fname,data,datalen,timeout));
+        return(start_transfer(previpaddr,sender,NXTaddr,NXTACCTSECRET,dest,fname,data,datalen,timeout,handler));
     }
     return(clonestr(origargstr));
 }
@@ -1652,16 +1678,16 @@ char *SuperNET_json_commands(struct NXThandler_info *mp,char *previpaddr,cJSON *
     static char *getmsigpubkey[] = { (char *)getmsigpubkey_func, "getmsigpubkey", "V", "coin", "refNXTaddr", "myaddr", "mypubkey", 0 };
     static char *MGWaddr[] = { (char *)MGWaddr_func, "MGWaddr", "V", 0 };
     static char *setmsigpubkey[] = { (char *)setmsigpubkey_func, "setmsigpubkey", "V", "coin", "refNXTaddr", "addr", "pubkey", 0 };
-    static char *MGWdeposits[] = { (char *)MGWdeposits_func, "MGWdeposits", "V", "NXT0", "NXT1", "NXT2", "ip0", "ip1", "ip2", "coin", "asset", "rescan", "actionflag", "specialNXT", "exclude0", "exclude1", 0 };
+    static char *MGWdeposits[] = { (char *)MGWdeposits_func, "MGWdeposits", "V", "NXT0", "NXT1", "NXT2", "ip0", "ip1", "ip2", "coin", "asset", "rescan", "actionflag", "specialNXT", "exclude0", "exclude1", "exclude2", "destip", 0 };
     static char *cosign[] = { (char *)cosign_func, "cosign", "V", "otheracct", "seed", "text", 0 };
     static char *cosigned[] = { (char *)cosigned_func, "cosigned", "V", "seed", "result", "privacct", "pubacct", 0 };
     
     // IP comms
     static char *ping[] = { (char *)ping_func, "ping", "V", "pubkey", "ipaddr", "port", "destip", 0 };
     static char *pong[] = { (char *)pong_func, "pong", "V", "pubkey", "ipaddr", "port", "yourip", "yourport", "tag", 0 };
-    static char *sendfrag[] = { (char *)sendfrag_func, "sendfrag", "V", "pubkey", "name", "fragi", "numfrags", "ipaddr", "totalcrc", "datacrc", "data", "totallen", "blocksize", 0 };
-    static char *gotfrag[] = { (char *)gotfrag_func, "gotfrag", "V", "pubkey", "name", "fragi", "numfrags", "ipaddr", "totalcrc", "datacrc", "totallen", "blocksize", "count", 0 };
-    static char *startxfer[] = { (char *)startxfer_func, "startxfer", "V", "fname", "dest", "data", "timeout", 0 };
+    static char *sendfrag[] = { (char *)sendfrag_func, "sendfrag", "V", "pubkey", "name", "fragi", "numfrags", "ipaddr", "totalcrc", "datacrc", "data", "totallen", "blocksize", "handler", 0 };
+    static char *gotfrag[] = { (char *)gotfrag_func, "gotfrag", "V", "pubkey", "name", "fragi", "numfrags", "ipaddr", "totalcrc", "datacrc", "totallen", "blocksize", "count", "handler", 0 };
+    static char *startxfer[] = { (char *)startxfer_func, "startxfer", "V", "fname", "dest", "data", "timeout", "handler", 0 };
 
     // Kademlia DHT
     static char *store[] = { (char *)store_func, "store", "V", "pubkey", "key", "name", "data", 0 };

@@ -89,6 +89,20 @@ void send_async_message(char *msg)
     uv_async_send(&Tasks_async);
 }*/
 
+void handler_gotfile(struct transfer_args *args)
+{
+    FILE *fp;
+    char buf[512];
+    set_handler_fname(buf,args->handler,args->name);
+    if ( (fp= fopen(buf,"wb")) != 0 )
+    {
+        fwrite(args->data,1,args->totallen,fp);
+        fclose(fp);
+    }
+    if ( strcmp(args->handler,"mgw") == 0 )
+        MGW_handler(args);
+}
+
 char *get_public_srvacctsecret()
 {
     struct coin_info *cp = get_coin_info("BTCD");
@@ -145,7 +159,7 @@ void every_minute(int32_t counter)
                 if ( gen_pingstr(_cmd,1) > 0 )
                 {
                     len = construct_tokenized_req((char *)finalbuf,_cmd,cp->srvNXTACCTSECRET);
-                    send_packet(nodes[i],0,finalbuf,len);
+                    send_packet(!prevent_queueing("ping"),nodes[i],0,finalbuf,len);
                     pserver = get_pserver(0,ipaddr,0,0);
                     send_kademlia_cmd(0,pserver,"ping",cp->srvNXTACCTSECRET,0,0);
                     p2p_publishpacket(pserver,0);
@@ -176,26 +190,29 @@ void SuperNET_idler(uv_idle_t *handle)
     static int counter;
     static double lastattempt,lastclock;
     double millis;
+    void *up;
     struct udp_queuecmd *qp;
     struct write_req_t *wr,*firstwr = 0;
-    int32_t r;
+    int32_t flag;
     char *jsonstr,*retstr,**ptrs;
     if ( Finished_init == 0 )
         return;
+    while ( (up= queue_dequeue(&UDP_Q)) != 0 )
+        process_udpentry(up);
     millis = ((double)uv_hrtime() / 1000000);
-    if ( millis > (lastattempt + 10) )
+    if ( millis > (lastattempt + 5) )
     {
         lastattempt = millis;
-        r = ((rand() >> 8) % 2);
         while ( (wr= queue_dequeue(&sendQ)) != 0 )
         {
             if ( wr == firstwr )
             {
-                queue_enqueue(&sendQ,wr);
-                //printf("reached firstwr.%p\n",firstwr);
+                //queue_enqueue(&sendQ,wr);
+                process_sendQ_item(wr);
+                printf("SuperNET_idler: reached firstwr.%p\n",firstwr);
                 break;
             }
-            if ( (wr->queuetime % 2) == r )
+            if ( wr->queuetime > lastattempt )
             {
                 process_sendQ_item(wr);
                 // free(wr); libuv does this
@@ -205,30 +222,39 @@ void SuperNET_idler(uv_idle_t *handle)
                 firstwr = wr;
             queue_enqueue(&sendQ,wr);
         }
-        if ( (qp= queue_dequeue(&udp_JSON)) != 0 )
+        if ( queue_size(&sendQ) != 0 )
+            printf("sendQ size.%d\n",queue_size(&sendQ));
+        flag = 1;
+        while ( flag != 0 )
         {
-            //printf("process qp argjson.%p\n",qp->argjson);
-            char previpaddr[64];
-            expand_ipbits(previpaddr,qp->previpbits);
-            jsonstr = SuperNET_json_commands(Global_mp,previpaddr,qp->argjson,qp->tokenized_np->H.U.NXTaddr,qp->valid,qp->decoded);
-            //printf("free qp (%s) argjson.%p\n",jsonstr,qp->argjson);
-            if ( jsonstr != 0 )
-                free(jsonstr);
-            free(qp->decoded);
-            free_json(qp->argjson);
-            free(qp);
-        }
-        else if ( (ptrs= queue_dequeue(&JSON_Q)) != 0 )
-        {
-            char *call_SuperNET_JSON(char *JSONstr);
-            jsonstr = ptrs[0];
-            if ( Debuglevel > 2 )
-                printf("dequeue JSON_Q.(%s)\n",jsonstr);
-            if ( (retstr= call_SuperNET_JSON(jsonstr)) == 0 )
-                retstr = clonestr("{\"result\":null}");
-            ptrs[1] = retstr;
-            if ( ptrs[2] != 0 )
-                queue_GUIpoll(ptrs);
+            flag = 0;
+            if ( (qp= queue_dequeue(&udp_JSON)) != 0 )
+            {
+                //printf("process qp argjson.%p\n",qp->argjson);
+                char previpaddr[64];
+                expand_ipbits(previpaddr,qp->previpbits);
+                jsonstr = SuperNET_json_commands(Global_mp,previpaddr,qp->argjson,qp->tokenized_np->H.U.NXTaddr,qp->valid,qp->decoded);
+                //printf("free qp (%s) argjson.%p\n",jsonstr,qp->argjson);
+                if ( jsonstr != 0 )
+                    free(jsonstr);
+                free(qp->decoded);
+                free_json(qp->argjson);
+                free(qp);
+                flag++;
+            }
+            else if ( (ptrs= queue_dequeue(&JSON_Q)) != 0 )
+            {
+                char *call_SuperNET_JSON(char *JSONstr);
+                jsonstr = ptrs[0];
+                if ( Debuglevel > 2 )
+                    printf("dequeue JSON_Q.(%s)\n",jsonstr);
+                if ( (retstr= call_SuperNET_JSON(jsonstr)) == 0 )
+                    retstr = clonestr("{\"result\":null}");
+                ptrs[1] = retstr;
+                if ( ptrs[2] != 0 )
+                    queue_GUIpoll(ptrs);
+                flag++;
+            }
         }
         if ( process_storageQ() != 0 )
         {
@@ -326,6 +352,7 @@ void init_NXThashtables(struct NXThandler_info *mp)
 char *init_NXTservices(char *JSON_or_fname,char *myipaddr)
 {
     static int32_t zero,one = 1;
+    struct coin_info *cp;
     struct NXThandler_info *mp = Global_mp;    // seems safest place to have main data structure
     printf("init_NXTservices.(%s)\n",myipaddr);
     UV_loop = uv_default_loop();
@@ -338,8 +365,10 @@ char *init_NXTservices(char *JSON_or_fname,char *myipaddr)
     mp->pollseconds = POLL_SECONDS;
     if ( portable_thread_create((void *)process_hashtablequeues,mp) == 0 )
         printf("ERROR hist process_hashtablequeues\n");
-    mp->udp = start_libuv_udpserver(4,SUPERNET_PORT,(void *)on_udprecv);
     myipaddr = init_MGWconf(JSON_or_fname,myipaddr);
+    mp->udp = start_libuv_udpserver(4,SUPERNET_PORT,on_udprecv);
+    if ( (cp= get_coin_info("BTCD")) != 0 && cp->bridgeport != 0 )
+        cp->bridgeudp = start_libuv_udpserver(4,cp->bridgeport,on_bridgerecv);
     if ( 0 )
     {
         uint32_t before,after;
@@ -460,24 +489,6 @@ char *block_on_SuperNET(int32_t blockflag,char *JSONstr)
     }
 }
 
-char *oldblock_on_SuperNET(int32_t blockflag,char *JSONstr)
-{
-    char **ptrs,*retstr;
-    ptrs = calloc(2,sizeof(*ptrs));
-    ptrs[0] = clonestr(JSONstr);
-    //printf("QUEUE.(%s)\n",JSONstr);
-    queue_enqueue(&JSON_Q,ptrs);
-    if ( blockflag != 0 )
-    {
-        while ( ptrs[1] == 0 )
-            usleep(1000);
-    } else ptrs[1] = clonestr("{\"result\":\"pending SuperNET API call\"}");
-    retstr = ptrs[1];
-    free(ptrs);
-    //printf("block returned.(%s)\n",retstr);
-    return(retstr);
-}
-
 char *SuperNET_JSON(char *JSONstr)
 {
     char *retstr = 0;
@@ -511,6 +522,8 @@ uint64_t call_SuperNET_broadcast(struct pserver_info *pserver,char *msg,int32_t 
     struct nodestats *stats;
     uint64_t txid = 0;
     int32_t port;
+    if ( SUPERNET_PORT != _SUPERNET_PORT )
+        return(0);
     if ( Debuglevel > 1 )
         printf("call_SuperNET_broadcast.%p %p len.%d\n",pserver,msg,len);
     txid = calc_txid((uint8_t *)msg,(int32_t)strlen(msg));
@@ -578,9 +591,11 @@ char *SuperNET_gotpacket(char *msg,int32_t duration,char *ip_port)
     int32_t len,createdflag,valid;
     unsigned char packet[2*MAX_JSON_FIELD];
     char ipaddr[64],txidstr[64],retjsonstr[2*MAX_JSON_FIELD],verifiedNXTaddr[64],*cmdstr,*retstr;
-    if ( Debuglevel > 2 )
-        printf("gotpacket.(%s) duration.%d from (%s)\n",msg,duration,ip_port);
+    if ( SUPERNET_PORT != _SUPERNET_PORT )
+        return(clonestr("{\"error\":private SuperNET}"));
     strcpy(retjsonstr,"{\"result\":null}");
+        if ( Debuglevel > 2 )
+        printf("gotpacket.(%s) duration.%d from (%s)\n",msg,duration,ip_port);
     if ( Finished_loading == 0 )
     {
         if ( is_hexstr(msg) == 0 )
@@ -702,12 +717,14 @@ int SuperNET_start(char *JSON_or_fname,char *myipaddr)
     {
         fprintf(stderr,"need to have BTCD active and also srvpubaddr\n");
         exit(-1);
-    }
+    } 
     Historical_done = 1;
+    Finished_init = 1;
+    if ( 0 && IS_LIBTEST > 1 && Global_mp->gatewayid >= 0 )
+        establish_connections(cp->myipaddr,cp->srvNXTADDR,cp->srvNXTACCTSECRET);
     //if ( IS_LIBTEST > 1 && Global_mp->gatewayid >= 0 )
     //    register_variant_handler(MULTIGATEWAY_VARIANT,process_directnet_syncwithdraw,MULTIGATEWAY_SYNCWITHDRAW,sizeof(struct batch_info),sizeof(struct batch_info),MGW_whitelist);
-    Finished_init = 1;
-    printf("finished addcontact\n");
-    return(0);
+    printf("finished addcontact SUPERNET_PORT.%d USESSL.%d\n",SUPERNET_PORT,USESSL);
+    return((SUPERNET_PORT << 1) | (USESSL&1));
 }
 
