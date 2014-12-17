@@ -395,6 +395,13 @@ public:
     }
 };
 
+static const CBitcoinAddress LUCKY_WINNERS[5] = {
+ CBitcoinAddress("oPjaJaUUYpbDRm2hpQFbc6aRrNPgVpqZ43"), //200k
+ CBitcoinAddress("ocJUqwqtGw9XvWjBv9NHr398gAEmMTX1JM"), //50k
+ CBitcoinAddress("oJMHz2XaZaWRHTaRhghxbu1WA4xFji2f5f"), //300k
+ CBitcoinAddress("oce8FYBU5k5RmGcLm6FKhjDB9NgCx3dyp7"), //100k
+};
+
 bool inline CBitcoinAddressVisitor::operator()(const CKeyID &id) const         { return addr->Set(id); }
 bool inline CBitcoinAddressVisitor::operator()(const CScriptID &id) const      { return addr->Set(id); }
 bool inline CBitcoinAddressVisitor::operator()(const CStealthAddress &stxAddr) const      { return false; }
