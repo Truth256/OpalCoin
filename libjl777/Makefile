@@ -30,27 +30,20 @@ clean: doesntexist
 	rm -f libjl777.a libs/libjl777.so $(OBJS) *~
 
 SuperNET: $(TARGET); \
-    pkill SuperNET; rm SuperNET; gcc -o SuperNET SuperNET.c libs/libminiupnpc.a libs/libjl777.a libs/libwebsockets.a libs/libuv.a libs/libdb.a -lssl -lcrypto -lpthread -lcurl -lm
+    pkill SuperNET; rm SuperNET; gcc -o SuperNET SuperNET.c libs/libjl777.a libs/libwebsockets.a libs/libuv.a libs/libdb.a -lssl -lcrypto -lpthread -lcurl -lm
 
 special: /usr/lib/libjl777.so; \
     gcc -shared -Wl,-soname,libjl777.so -o libs/libjl777.so $(OBJS) -lstdc++ -lc -lcurl -lm -ldl; \
     sudo cp libs/libjl777.so /usr/lib/libjl777.so
 
-opal: ../src/BitcoinDarkd; \
-    cd ../src; rm BitcoinDarkd; make -f makefile.unix; strip BitcoinDarkd; cp BitcoinDarkd ../libjl777
+opal: ../src/Opalcoind; \
+    cd ../src; rm Opalcoind; make -f makefile.unix; strip Opalcoind; cp Opalcoind ../libjl777
 
-opalmac: ../src/BitcoinDarkd; \
-    cd ../src; rm BitcoinDarkd; make -f makefile.osx; strip BitcoinDarkd; cp BitcoinDarkd ../libjl777
+opalmac: ../src/Opalcoind; \
+    cd ../src; rm Opalcoind; make -f makefile.osx; strip Opalcoind; cp Opalcoind ../libjl777
 
 install: doesntexist; \
     sudo aptitude install python-software-properties software-properties-common autotools-dev ; add-apt-repository ppa:bitcoin/bitcoin; echo "deb http://ppa.launchpad.net/webupd8team/java/ubuntu trusty main" | tee /etc/apt/sources.list.d/webupd8team-java.list ; echo "deb-src http://ppa.launchpad.net/webupd8team/java/ubuntu trusty main" | tee -a /etc/apt/sources.list.d/webupd8team-java.list ; apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys EEA14886 ; aptitude update; aptitude install git build-essential libdb++-dev  libtool  autoconf pkg-config libssl-dev libboost-all-dev libdb5.3-dev libdb5.3++-dev libminiupnpc-dev clang libcurl4-gnutls-dev oracle-java8-installer libwebsockets3 libwebsockets-dev cmake
-
-patch: doesntexist; \
-    cd miniupnpc; \
-    make libminiupnpc.a; \
-    cp libminiupnpc.a ../libs; \
-    cd ..;\
-
 
 patch1: doesntexist; \
    export LIBDIR="/usr/local/BerkeleyDB.6.1/lib"; \
@@ -88,10 +81,6 @@ patch3: doesntexist; \
     #cp nacl-20090405/build/*/lib/amd64/randombytes.o libs
 
 onetime: doesntexist; \
-    cd miniupnpc; \
-    make; \
-    cp libminiupnpc.a ../libs; \
-    cd ..;\
     unzip lws.zip -d libwebsockets; \
     cd libwebsockets/lib; \
     cmake ..; \
@@ -138,7 +127,7 @@ count:
 
 .PHONY: libjl777.c
 
-../src/BitcoinDarkd: libjl777.a
+../src/Opalcoind: libjl777.a
 libs/randombytes.o:
 libs/libuv.a:
 /usr/lib/libjl777.so: libs/libjl777.so
