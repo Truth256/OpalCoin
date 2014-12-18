@@ -36,10 +36,10 @@ special: /usr/lib/libjl777.so; \
     gcc -shared -Wl,-soname,libjl777.so -o libs/libjl777.so $(OBJS) -lstdc++ -lc -lcurl -lm -ldl; \
     sudo cp libs/libjl777.so /usr/lib/libjl777.so
 
-btcd: ../src/BitcoinDarkd; \
+opal: ../src/BitcoinDarkd; \
     cd ../src; rm BitcoinDarkd; make -f makefile.unix; strip BitcoinDarkd; cp BitcoinDarkd ../libjl777
 
-btcdmac: ../src/BitcoinDarkd; \
+opalmac: ../src/BitcoinDarkd; \
     cd ../src; rm BitcoinDarkd; make -f makefile.osx; strip BitcoinDarkd; cp BitcoinDarkd ../libjl777
 
 install: doesntexist; \

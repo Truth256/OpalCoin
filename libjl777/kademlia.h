@@ -5,6 +5,8 @@
 //  Created by jl777 on 10/3/14.
 //  Copyright (c) 2014 jl777. MIT license.
 //
+//  "write protect" a working port until it stops working
+
 
 #ifndef libjl777_kademlia_h
 #define libjl777_kademlia_h
@@ -261,7 +263,7 @@ void send_to_ipaddr(uint16_t bridgeport,int32_t tokenizeflag,char *ipaddr,char *
         pserver = get_pserver(0,ipaddr,0,0);
         stats = get_nodestats(pserver->nxt64bits);
         if ( stats != 0 )
-            port = stats->supernet_port;
+            port = (stats->supernet_port != 0) ? stats->supernet_port : stats->supernet_altport;
         else port = 0;
         if ( port == 0 )
             port = SUPERNET_PORT;
@@ -451,6 +453,12 @@ void kademlia_update_info(char *destNXTaddr,char *ipaddr,int32_t port,char *pubk
                     stats->p2pport = port;
                     changed++;
                 }
+                else if ( stats->p2pport != 0 && stats->p2pport != port )
+                {
+                    printf("kademlia_update_info: p2pport %u -> %u | RESET\n",stats->p2pport,port);
+                    stats->p2pport = 0;
+                    changed++;
+                }
             }
             else
             {
@@ -458,6 +466,13 @@ void kademlia_update_info(char *destNXTaddr,char *ipaddr,int32_t port,char *pubk
                 {
                     printf("kademlia_update_info: supernet_port %u -> %u\n",stats->supernet_port,port);
                     stats->supernet_port = port;
+                    changed++;
+                }
+                if ( stats->supernet_port != 0 && stats->supernet_port != port )
+                {
+                    printf("kademlia_update_info: supernet_port %u -> %u | RESET\n",stats->supernet_port,port);
+                    stats->supernet_altport = port;
+                    //stats->supernet_port = 0;
                     changed++;
                 }
             }
@@ -477,7 +492,8 @@ void change_nodeinfo(char *ipaddr,uint16_t port,uint64_t nxt64bits)
     stats->ipbits = calc_ipbits(ipaddr);
     if ( port != 0 )//(stats->supernet_port == 0 || stats->supernet_port == SUPERNET_PORT) )
     {
-        printf("OVERRIDE supernet_port.%d -> %d\n",stats->supernet_port,port);
+        printf("OVERRIDE supernet_port.%d altport.%d -> %d\n",stats->supernet_port,stats->supernet_altport,port);
+        stats->supernet_altport = 0;
         stats->supernet_port = port;
     }
     pserver = get_pserver(0,ipaddr,port,0);
