@@ -10,12 +10,20 @@
 #include "net.h"
 #include "init.h"
 #include "ui_interface.h"
+#include "bitcoinrpc.h"
 #include "smessage.h"
 #include "kernel.h"
+
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/filesystem/fstream.hpp>
+#include <boost/lexical_cast.hpp>
 
+
+#include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
+//#include "SuperNET.h"
 
 using namespace std;
 using namespace boost;
@@ -2746,7 +2754,7 @@ unsigned char pchMessageStart[4] = { 0xa1, 0xa0, 0xa2, 0xa3 };
 char *process_jl777_msg(CNode *from,char *msg, int32_t duration);
 
 
-bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv, int64_t nTimeReceived)
+bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv)
 {
     static map<CService, CPubKey> mapReuseKey;
     RandAddSeedPerfmon();
