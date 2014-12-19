@@ -2004,26 +2004,5 @@ int32_t establish_connection(char *ipaddr,char *NXTADDR,char *NXTACCTSECRET,uint
     free(zeroes);
     return(0);
 }
-
-void establish_connections(char *myipaddr,char *NXTADDR,char *NXTACCTSECRET)
-{
-    char ipaddr[64];
-    int32_t iter,i,n,m = 0;
-    cJSON *array;
-    array = cJSON_GetObjectItem(MGWconf,"whitelist");
-    if ( array != 0 && is_cJSON_Array(array) != 0 && (n= cJSON_GetArraySize(array)) > 0 )
-    {
-        for (iter=0; iter<3; iter++)
-        while ( m < n-1 )
-        {
-            for (i=m=0; i<n; i++)
-            {
-                copy_cJSON(ipaddr,cJSON_GetArrayItem(array,i));
-                if ( strcmp(ipaddr,myipaddr) != 0 )
-                    m += establish_connection(ipaddr,NXTADDR,NXTACCTSECRET,15,iter);
-            }
-        }
-    }
-}
 #endif
 
