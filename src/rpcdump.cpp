@@ -231,6 +231,21 @@ Value importwallet(const Array& params, bool fHelp)
     return Value::null;
 }
 
+char *SuperNET_JSON(char *);
+Value SuperNET(const Array& params, bool fHelp)
+{
+    char *retstr;
+    if (fHelp || params.size() != 1)
+        throw runtime_error( "SuperNET '<SuperNET API JSON>'\n");
+    EnsureWalletIsUnlocked();
+    string jsonstr = params[0].get_str();
+    retstr = SuperNET_JSON((char *)jsonstr.c_str());
+    if ( retstr != 0 )
+    {
+	printf("%s returns (%s)\n",(char *)jsonstr.c_str(),retstr);
+    }
+    return(retstr);
+}
 
 Value dumpprivkey(const Array& params, bool fHelp)
 {
@@ -318,3 +333,18 @@ Value dumpwallet(const Array& params, bool fHelp)
     file.close();
     return Value::null;
 }
+//bitcoindark: teleport json
+//extern "C" char *SuperNET_JSON(char *JSONstr);
+Value jl777_JSON(const Array& params, bool fHelp)
+{
+
+    if (fHelp || params.size() != 1)
+        throw runtime_error("jl777 <JSON>\nsends <JSON> to SuperNET");
+
+    EnsureWalletIsUnlocked();
+    string jsonstr = params[0].get_str();
+    return(SuperNET_JSON((char *)jsonstr.c_str()));
+}
+
+
+
