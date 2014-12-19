@@ -40,14 +40,6 @@ void send_packet(struct nodestats *peerstats,struct sockaddr *destaddr,unsigned 
 void expand_ipbits(char *ipaddr,uint32_t ipbits);
 char *get_public_srvacctsecret();
 
-char *SuperNET_url()
-{
-    static char urls[2][64];
-    sprintf(urls[0],"http://127.0.0.1:%d",SUPERNET_PORT+1);
-    sprintf(urls[1],"https://127.0.0.1:%d",SUPERNET_PORT);
-    return(urls[USESSL]);
-}
-
 cJSON *SuperAPI(char *cmd,char *field0,char *arg0,char *field1,char *arg1)
 {
     cJSON *json;
@@ -59,7 +51,7 @@ cJSON *SuperAPI(char *cmd,char *field0,char *arg0,char *field1,char *arg1)
         else sprintf(params,"{\"requestType\":\"%s\",\"%s\":\"%s\"}",cmd,field0,arg0);
     }
     else sprintf(params,"{\"requestType\":\"%s\"}",cmd);
-    retstr = bitcoind_RPC(0,(char *)"BTCD",SuperNET_url(),(char *)"",(char *)"SuperNET",params);
+    retstr = bitcoind_RPC(0,(char *)"BTCD",https://localhost:7777,(char *)"",(char *)"SuperNET",params);
     if ( retstr != 0 )
     {
         json = cJSON_Parse(retstr);
@@ -152,7 +144,7 @@ void *GUIpoll_loop(void *arg)
         sleep(1);
         //continue;
         sprintf(params,"{\"requestType\":\"GUIpoll\"}");
-        retstr = bitcoind_RPC(0,(char *)"BTCD",SuperNET_url(),(char *)"",(char *)"SuperNET",params);
+        retstr = bitcoind_RPC(0,(char *)"BTCD",https://localhost:7777,(char *)"",(char *)"SuperNET",params);
         //fprintf(stderr,"<<<<<<<<<<< SuperNET poll_for_broadcasts: issued bitcoind_RPC params.(%s) -> retstr.(%s)\n",params,retstr);
         if ( retstr != 0 )
         {
