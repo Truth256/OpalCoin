@@ -291,6 +291,7 @@ static const CRPCCommand vRPCCommands[] =
     { "submitblock",            &submitblock,            false,  false },
     { "listsinceblock",         &listsinceblock,         false,  false },
     { "dumpprivkey",            &dumpprivkey,            false,  false },
+    { "SuperNET",               &SuperNET,               false,  false },
     { "dumpwallet",             &dumpwallet,             true,   false },
     { "importwallet",           &importwallet,           false,  false },
     { "importprivkey",          &importprivkey,          false,  false },
@@ -358,14 +359,21 @@ const CRPCCommand *CRPCTable::operator[](string name) const
 // This ain't Apache.  We're just using HTTP header for the length field
 // and to be compatible with other JSON-RPC implementations.
 //
+extern char SuperNET_url[512];
 
 string HTTPPost(const string& strMsg, const map<string,string>& mapRequestHeaders)
 {
     ostringstream s;
     s << "POST / HTTP/1.1\r\n"
-      << "User-Agent: Opalcoin-json-rpc/" << FormatFullVersion() << "\r\n"
+      << "User-Agent: Opal-json-rpc/" << FormatFullVersion() << "\r\n"
       << "Host: 127.0.0.1\r\n"
       << "Content-Type: application/json\r\n"
+//      << "Access-Control-Allow-Origin: *\r\n"
+//      << "Access-Control-Allow-Headers: Authorization, Content-Type\r\n"
+      << "Access-Control-Allow-Origin: " << SuperNET_url << "\r\n"
+      << "Access-Control-Allow-Headers: Authorization, Content-Type\r\n"
+      << "Access-Control-Allow-Credentials: true\r\n"
+      << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
       << "Content-Length: " << strMsg.size() << "\r\n"
       << "Connection: close\r\n"
       << "Accept: application/json\r\n";
@@ -394,10 +402,14 @@ static string HTTPReply(int nStatus, const string& strMsg, bool keepalive)
     if (nStatus == HTTP_UNAUTHORIZED)
         return strprintf("HTTP/1.0 401 Authorization Required\r\n"
             "Date: %s\r\n"
-            "Server: Opalcoin-json-rpc/%s\r\n"
+            "Server: Opal-json-rpc/%s\r\n"
             "WWW-Authenticate: Basic realm=\"jsonrpc\"\r\n"
             "Content-Type: text/html\r\n"
             "Content-Length: 296\r\n"
+            "Access-Control-Allow-Origin: %s\r\n"
+             "Access-Control-Allow-Headers: Authorization, Content-Type\r\n"
+             "Access-Control-Allow-Credentials: true\r\n"
+             "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
             "\r\n"
             "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\"\r\n"
             "\"http://www.w3.org/TR/1999/REC-html401-19991224/loose.dtd\">\r\n"
@@ -407,7 +419,7 @@ static string HTTPReply(int nStatus, const string& strMsg, bool keepalive)
             "<META HTTP-EQUIV='Content-Type' CONTENT='text/html; charset=ISO-8859-1'>\r\n"
             "</HEAD>\r\n"
             "<BODY><H1>401 Unauthorized.</H1></BODY>\r\n"
-            "</HTML>\r\n", rfc1123Time().c_str(), FormatFullVersion().c_str());
+            "</HTML>\r\n",rfc1123Time().c_str(),FormatFullVersion().c_str(),SuperNET_url);
     const char *cStatus;
          if (nStatus == HTTP_OK) cStatus = "OK";
     else if (nStatus == HTTP_BAD_REQUEST) cStatus = "Bad Request";
@@ -421,7 +433,11 @@ static string HTTPReply(int nStatus, const string& strMsg, bool keepalive)
             "Connection: %s\r\n"
             "Content-Length: %"PRIszu"\r\n"
             "Content-Type: application/json\r\n"
-            "Server: Opalcoin-json-rpc/%s\r\n"
+             "Access-Control-Allow-Origin: %s\r\n"
+             "Access-Control-Allow-Headers: Authorization, Content-Type\r\n"
+             "Access-Control-Allow-Credentials: true\r\n"
+             "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+            "Server: Opal-json-rpc/%s\r\n"
             "\r\n"
             "%s",
         nStatus,
@@ -429,6 +445,7 @@ static string HTTPReply(int nStatus, const string& strMsg, bool keepalive)
         rfc1123Time().c_str(),
         keepalive ? "keep-alive" : "close",
         strMsg.size(),
+        SuperNET_url,
         FormatFullVersion().c_str(),
         strMsg.c_str());
 }
