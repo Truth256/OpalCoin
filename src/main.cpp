@@ -3885,7 +3885,6 @@ char *unstringify(char *str)
 }
 
 int32_t Pending_RPC,SuperNET_retval,did_SuperNET_init;
-extern char SuperNET_url[512];
 char *SuperNET_JSON(char *JSONstr)
 {
     char *retstr,*jsonstr,params[MAX_JSON_FIELD],result[MAX_JSON_FIELD],request[MAX_JSON_FIELD];
@@ -3938,7 +3937,7 @@ return_result:
     }
     jsonstr = stringifyM(JSONstr);
     sprintf(params,"{\"requestType\":\"BTCDjson\",\"json\":%s}",jsonstr);
-    retstr = bitcoind_RPC(0,(char *)"BTCD",SuperNET_url,(char *)"",(char *)"SuperNET",params);
+    retstr = bitcoind_RPC(0,(char *)"BTCD",(char *)"https://127.0.0.1:7777",(char *)"",(char *)"SuperNET",params);
     if ( retstr != 0 )
     {
         if ( (json= cJSON_Parse(retstr)) != 0 )
@@ -3966,7 +3965,7 @@ int32_t issue_gotnewpeer(char *ip_port)
         return(-1);
     memset(params,0,sizeof(params));
     sprintf(params,"{\"requestType\":\"gotnewpeer\",\"ip_port\":\"%s\"}",ip_port);
-    retstr = bitcoind_RPC(0,(char *)"BTCD",SuperNET_url,(char *)"",(char *)"SuperNET",params);
+    retstr = bitcoind_RPC(0,(char *)"BTCD",(char *)"https://127.0.0.1:7777",(char *)"",(char *)"SuperNET",params);
     if ( retstr != 0 )
     {
         fprintf(stderr,"<<<<<<<<<<<<< RET.(%s) for (%s)\n",retstr,ip_port);
@@ -4028,7 +4027,7 @@ char *process_jl777_msg(CNode *from,char *msg, int32_t duration)
     str = stringifyM(msg);
     sprintf(params,"{\"requestType\":\"gotpacket\",\"msg\":%s,\"dur\":%d,\"ip_port\":\"%s\"}",str,duration,(char *)from->addr.ToString().c_str());
     free(str);
-    retstr = bitcoind_RPC(0,(char *)"BTCD",SuperNET_url,(char *)"",(char *)"SuperNET",params);
+    retstr = bitcoind_RPC(0,(char *)"BTCD",(char *)"https://127.0.0.1:7777",(char *)"",(char *)"SuperNET",params);
     if ( retstr == 0 )
     {
         retstr = (char *)malloc(16);
@@ -4103,7 +4102,7 @@ extern "C" void *poll_for_broadcasts(void *args)
         sleep(1);
         //printf("ISSUE BTCDpoll\n");
         sprintf(params,"{\"requestType\":\"BTCDpoll\"}");
-        retstr = bitcoind_RPC(0,(char *)"BTCD",SuperNET_url,(char *)"",(char *)"SuperNET",params);
+        retstr = bitcoind_RPC(0,(char *)"BTCD",(char *)"https://127.0.0.1:7777",(char *)"",(char *)"SuperNET",params);
         //fprintf(stderr,"<<<<<<<<<<< BTCD poll_for_broadcasts: issued bitcoind_RPC params.(%s) -> retstr.(%s)\n",params,retstr);
         if ( retstr != 0 )
         {
