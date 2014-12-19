@@ -11,6 +11,7 @@
 #include "script.h"
 #include "scrypt.h"
 #include "hashblock.h"
+#include "pubaddr.h"
 
 #include <list>
 
