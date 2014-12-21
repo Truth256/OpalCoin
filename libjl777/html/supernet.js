@@ -1,4 +1,4 @@
-var rpcport = "14632";
+var rpcport = "21990";
 
 function initRPC(data) {
     $.ajax({
